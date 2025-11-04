@@ -41,13 +41,9 @@ plot(camera_traps, add=TRUE, col='darkgoldenrod1', pch=17, cex=1)
 # Load all spacial datas
 fish_river <- terra::vect('fish_river.shp')
 konkiep_river <- terra::vect('konkiep_river.shp')
-
 water_points <- terra::vect('water_points.shp')
-
 tourist_road <- terra::vect('tourist_road.shp')
-
 staff_buildings <- terra::vect('staff_buildings.shp')
-
 study_area <- terra::vect('study_area.shp')
 
 # Check if loded correctly
