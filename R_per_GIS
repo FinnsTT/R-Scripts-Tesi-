@@ -94,3 +94,33 @@ plot(water_points_utm, add=TRUE, col='skyblue1', pch=19, cex=1)
 plot(tourist_road_utm, add=TRUE, col='red', lwd=1)
 plot(staff_buildings_utm, add=TRUE, col='#FFE1FF', pch=15)
 plot(camera_traps, add=TRUE, col='#CDBA96', pch=17, cex=1)
+
+# Extract elevation values at camera trap locations
+elevation_data <- terra::extract(dem, camera_traps, xy=TRUE) #Takes the DEM raster and extracts the elevation value at each of the 71 camera traps points.
+
+# Check results
+head(elevation_data)
+
+# Check column names
+print(names(elevation_data))
+
+# rename the elevation column 
+names(elevation_data)[2] <- "elevation"
+
+# View the data
+head(elevation_data)
+str(elevation_data)
+
+# Quick summary statistics
+summary(elevation_data$elevation)
+
+# Add elevation values to camera_traps vector
+camera_traps$elevation <- elevation_data$elevation
+
+# Add X and Y coordinates
+coords <- terra::crds(camera_traps)
+camera_traps$X <- coords[, "x"]
+camera_traps$Y <- coords[, "y"]
+
+# Check results
+print(camera_traps)
