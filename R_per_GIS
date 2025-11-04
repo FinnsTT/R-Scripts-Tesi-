@@ -1,0 +1,96 @@
+# Install and load packages
+install.packages("terra")
+install.packages("sf")
+install.packages("dplyr")
+install.packages("spatialEco")
+install.packages("raster")
+install.packages("sp")
+install.packages("rasterVis")
+install.packages("spatstat")
+
+library(terra)
+library(sf)
+library(dplyr)
+library(spatialEco)
+library(raster)
+library(sp)
+library(rasterVis)
+
+# Set working directory
+setwd("C:\\Users\\Dell\\Desktop\\codici tesi\\file GIS")
+
+# Load the DEM
+dem <- terra::rast('dem.tif')
+
+# Check if loaded correctly
+print(dem)
+plot(dem, main="Fish River Canyon DEM")
+
+# Load camera trap locations
+camera_traps <- terra::vect('camera_traps.shp')
+
+# Check if loaded correctly
+print(camera_traps)
+plot(dem)
+plot(camera_traps, add=TRUE, col='darkgoldenrod1', pch=17, cex=0.5)
+
+# Zoom on the study area
+plot(dem, ext=ext(camera_traps)*1.2)  # 20% bigger
+plot(camera_traps, add=TRUE, col='darkgoldenrod1', pch=17, cex=1)
+
+# Load all spacial datas
+fish_river <- terra::vect('fish_river.shp')
+konkiep_river <- terra::vect('konkiep_river.shp')
+
+water_points <- terra::vect('water_points.shp')
+
+tourist_road <- terra::vect('tourist_road.shp')
+
+staff_buildings <- terra::vect('staff_buildings.shp')
+
+study_area <- terra::vect('study_area.shp')
+
+# Check if loded correctly
+print(fish_river)
+print(konkiep_river)
+print(water_points)
+print(tourist_road)
+print(staff_buildings)
+print(study_area)
+
+# Check the extent of each layer
+ext(dem)
+ext(camera_traps)
+ext(fish_river)
+ext(konkiep_river)
+ext(water_points)
+ext(tourist_road)
+ext(staff_buildings)
+ext(study_area)
+
+# Reproject all geographic layers to match DEM projection
+fish_river_utm <- terra::project(fish_river, crs(dem))
+konkiep_river_utm <- terra::project(konkiep_river, crs(dem))
+water_points_utm <- terra::project(water_points, crs(dem))
+tourist_road_utm <- terra::project(tourist_road, crs(dem))
+staff_buildings_utm <- terra::project(staff_buildings, crs(dem))
+
+# Check the CRS (coordinate reference system) of each layer
+crs(dem)
+crs(camera_traps)
+crs(fish_river)
+crs(konkiep_river)
+crs(water_points)
+crs(tourist_road)
+crs(staff_buildings)
+crs(study_area)
+
+# Plot all layers together
+plot(dem, main="Spatial data")
+plot(dem, ext=ext(camera_traps)*1.2, main="Study Area")
+plot(fish_river_utm, add=TRUE, col='mediumpurple3', lwd=3)
+plot(konkiep_river_utm, add=TRUE, col='mediumpurple3', lwd=3, lty=2)
+plot(water_points_utm, add=TRUE, col='skyblue1', pch=19, cex=1)
+plot(tourist_road_utm, add=TRUE, col='red', lwd=1)
+plot(staff_buildings_utm, add=TRUE, col='#FFE1FF', pch=15)
+plot(camera_traps, add=TRUE, col='#CDBA96', pch=17, cex=1)
