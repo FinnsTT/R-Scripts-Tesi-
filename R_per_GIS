@@ -120,3 +120,33 @@ camera_traps$Y <- coords[, "y"]
 
 # Check results
 print(camera_traps)
+
+# Convert 71 cameras to dataframe and view
+camera_traps_df <- as.data.frame(camera_traps)
+print(camera_traps_df)
+write.csv(camera_traps_df, "camera_traps_with_elevation.csv", row.names=FALSE) # Export to CSV file
+
+#Calculating important terrain variables that affect hyenas habitat
+
+# Calculate SLOPE (degrees)
+# Steepness of terrain (important for hyena movement)
+slope <- terra::terrain(dem, v='slope', neighbors=8, unit='degrees')
+plot(slope, main="Slope (degrees)")
+
+# Calculate TRI (Terrain Ruggedness Index)
+# Ridgetop (+) vs valley bottom (-) position
+tri <- terra::terrain(dem, v='TRI', neighbors=8)
+plot(tri, main="Terrain Ruggedness Index")
+
+# Calculate ASPECT (direction the slope faces)
+# Direction slope faces (N,S,E,W-affects sun exposure)
+aspect <- terra::terrain(dem, v='aspect', neighbors=8, unit='degrees')
+plot(aspect, main="Aspect (degrees)")
+
+# Calculate TPI (Topographic Position Index) - using spatialEco
+# Terrain roughness (rough or smooth terrain)
+tpi <- spatialEco::tpi(dem, scale=1000, win='circle', normalize=FALSE)
+plot(tpi, main="Topographic Position Index")
+plot(camera_traps, add=TRUE, col='darkgoldenrod1', pch=17, cex=0.5)
+
+
