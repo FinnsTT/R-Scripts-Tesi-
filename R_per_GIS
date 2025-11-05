@@ -147,6 +147,88 @@ plot(aspect, main="Aspect (degrees)")
 # Terrain roughness (rough or smooth terrain)
 tpi <- spatialEco::tpi(dem, scale=1000, win='circle', normalize=FALSE)
 plot(tpi, main="Topographic Position Index")
-plot(camera_traps, add=TRUE, col='darkgoldenrod1', pch=17, cex=0.5)
+plot(camera_traps, add=TRUE, col='deeppink3', pch=17, cex=0.5)
 
+#Extract Terrain Metrics at Camera Traps #slope, TRI, aspect, and TPI values at each of your 71 camera trap locations
+
+slope_data <- terra::extract(slope, camera_traps)
+tri_data <- terra::extract(tri, camera_traps)
+aspect_data <- terra::extract(aspect, camera_traps)
+tpi_data <- terra::extract(tpi, camera_traps)
+
+# Check what we extracted
+head(slope_data)
+head(tri_data)
+
+# Add to camera_traps vector
+camera_traps$slope <- slope_data[,2]
+camera_traps$tri <- tri_data[,2]
+camera_traps$aspect <- aspect_data[,2]
+camera_traps$tpi <- tpi_data[,2]
+
+# Check result - now you should see all terrain variables!
+print(camera_traps)
+
+# Summary statistics
+summary(camera_traps$slope)
+summary(camera_traps$tri)
+summary(camera_traps$aspect)
+summary(camera_traps$tpi)
+
+# Export updated CSV with all terrain metrics
+camera_traps_df <- as.data.frame(camera_traps)
+write.csv(camera_traps_df, "camera_traps_with_terrain.csv", row.names=FALSE)
+
+# Calculating distances 
+
+# Distance to Fish River
+dist_fish_river <- terra::distance(dem, fish_river_utm)
+plot(dist_fish_river, main="Distance to Fish River (m)")
+plot(camera_traps, add=TRUE, col='honeydew2', pch=17, cex=0.8)
+
+# Distance to Konkiep River
+dist_konkiep_river <- terra::distance(dem, konkiep_river_utm)
+plot(dist_konkiep_river, main="Distance to Konkiep River (m)")
+plot(camera_traps, add=TRUE, col='honeydew2', pch=17, cex=0.8)
+
+# Distance to water points 
+dist_water_points <- terra::distance(dem, water_points_utm)
+plot(dist_water_points, main="Distance to Water Points (m)")
+plot(camera_traps, add=TRUE, col='honeydew2', pch=17, cex=0.8)
+
+# Distance to tourist road 
+dist_tourist_road <- terra::distance(dem, tourist_road_utm)
+plot(dist_tourist_road, main="Distance to Tourist Road (m)")
+plot(camera_traps, add=TRUE, col='honeydew2', pch=17, cex=0.8)
+
+# Distance to staff buildings
+dist_staff_buildings <- terra::distance(dem, staff_buildings_utm)
+plot(dist_staff_buildings, main="Distance to Staff Buildings (m)")
+plot(camera_traps, add=TRUE, col='honeydew2', pch=17, cex=0.8)
+
+# Extract distance values at camera trap locations
+dist_fish_data <- terra::extract(dist_fish_river, camera_traps)
+dist_konkiep_data <- terra::extract(dist_konkiep_river, camera_traps)
+dist_water_data <- terra::extract(dist_water_points, camera_traps)
+dist_road_data <- terra::extract(dist_tourist_road, camera_traps)
+dist_buildings_data <- terra::extract(dist_staff_buildings, camera_traps)
+
+# Add to camera_traps vector
+camera_traps$dist_fish_river <- dist_fish_data[,2]
+camera_traps$dist_konkiep_river <- dist_konkiep_data[,2]
+camera_traps$dist_water_points <- dist_water_data[,2]
+camera_traps$dist_tourist_road <- dist_road_data[,2]
+camera_traps$dist_staff_buildings <- dist_buildings_data[,2]
+
+# Check result 
+print(camera_traps)
+
+# Summary statistics for distances
+summary(camera_traps$dist_fish_river)
+summary(camera_traps$dist_water_points)
+summary(camera_traps$dist_tourist_road)
+
+# Export final covariate dataset
+camera_traps_df <- as.data.frame(camera_traps)
+write.csv(camera_traps_df, "camera_traps_all_covariates.csv", row.names=FALSE)
 
