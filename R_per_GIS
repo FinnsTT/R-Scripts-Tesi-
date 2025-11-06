@@ -89,7 +89,7 @@ plot(konkiep_river_utm, add=TRUE, col='mediumpurple3', lwd=3, lty=2)
 plot(water_points_utm, add=TRUE, col='skyblue1', pch=19, cex=1)
 plot(tourist_road_utm, add=TRUE, col='red', lwd=1)
 plot(staff_buildings_utm, add=TRUE, col='#FFE1FF', pch=15)
-plot(camera_traps, add=TRUE, col='#CDBA96', pch=17, cex=1)
+plot(camera_traps, add=TRUE, col='snow2', pch=17, cex=1)
 
 # Extract elevation values at camera trap locations
 elevation_data <- terra::extract(dem, camera_traps, xy=TRUE) #Takes the DEM raster and extracts the elevation value at each of the 71 camera traps points.
@@ -278,3 +278,25 @@ summary(camera_traps$slope_1km)
 summary(camera_traps$tri)            
 summary(camera_traps$tri_1km)     
 
+# Export FINAL covariate dataset with all variables
+camera_traps_df <- as.data.frame(camera_traps)
+
+# Check all column names
+names(camera_traps_df)
+
+# View the complete dataset
+View(camera_traps_df)
+
+# Summary of key covariates for N-Mixture
+summary(camera_traps_df[, c("elevation_1km", "slope_1km", "tri_1km", 
+                            "dist_water_points", "dist_fish_river", 
+                            "dist_tourist_road")])
+
+# Export to CSV
+write.csv(camera_traps_df, "FINAL_camera_traps_covariates.csv", row.names=FALSE)
+
+# Success message
+cat("\n=== COVARIATE EXTRACTION COMPLETE ===\n")
+cat("Total camera traps:", nrow(camera_traps_df), "\n")
+cat("Total covariates:", ncol(camera_traps_df), "\n")
+cat("File saved: FINAL_camera_traps_covariates.csv\n")
