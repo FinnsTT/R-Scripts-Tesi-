@@ -27,3 +27,9 @@ Spatial covariate extraction for N-Mixture models to estimate brown hyena (*Para
 ## Software
 - R version 4.x
 - Required packages: terra, sf, dplyr, spatialEco, raster
+
+## Author
+- Bissoni S.
+
+## Date
+2025
