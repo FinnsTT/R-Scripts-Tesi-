@@ -126,7 +126,7 @@ camera_traps_df <- as.data.frame(camera_traps)
 print(camera_traps_df)
 write.csv(camera_traps_df, "camera_traps_with_elevation.csv", row.names=FALSE) # Export to CSV file
 
-#Calculating important terrain variables that affect hyenas habitat
+#CALCULATING TERRAIN VARIABLES that affect hyenas habitat
 
 # Calculate SLOPE (degrees)
 # Steepness of terrain (important for hyena movement)
@@ -149,7 +149,7 @@ tpi <- spatialEco::tpi(dem, scale=1000, win='circle', normalize=FALSE)
 plot(tpi, main="Topographic Position Index")
 plot(camera_traps, add=TRUE, col='deeppink3', pch=17, cex=0.5)
 
-#Extract Terrain Metrics at Camera Traps #slope, TRI, aspect, and TPI values at each of your 71 camera trap locations
+#EXTRACT TERRAIN METRIX at Camera Traps #slope, TRI, aspect, and TPI values at each of your 71 camera trap locations
 
 slope_data <- terra::extract(slope, camera_traps)
 tri_data <- terra::extract(tri, camera_traps)
@@ -179,7 +179,7 @@ summary(camera_traps$tpi)
 camera_traps_df <- as.data.frame(camera_traps)
 write.csv(camera_traps_df, "camera_traps_with_terrain.csv", row.names=FALSE)
 
-# Calculating distances 
+# CALCULATING DISTANCES 
 
 # Distance to Fish River
 dist_fish_river <- terra::distance(dem, fish_river_utm)
@@ -231,4 +231,50 @@ summary(camera_traps$dist_tourist_road)
 # Export final covariate dataset
 camera_traps_df <- as.data.frame(camera_traps)
 write.csv(camera_traps_df, "camera_traps_all_covariates.csv", row.names=FALSE)
+
+# BUFFER ANALISYS
+
+# Create 1km buffers around each camera trap
+buffers_1km <- terra::buffer(camera_traps, width=1000)
+
+# Check the buffers
+plot(dem, ext=ext(camera_traps)*1.3, main="1km Buffers around Camera Traps")
+plot(buffers_1km, add=TRUE, border='lightyellow', lwd=1)
+plot(camera_traps, add=TRUE, col='magenta', pch=17, cex=0.5)
+
+# Calculate zonal statistics (mean) for each buffer
+# Mean elevation within 1km
+elevation_1km <- terra::zonal(dem, buffers_1km, fun='mean', na.rm=TRUE)
+head(elevation_1km)
+
+# Mean slope within 1km
+slope_1km <- terra::zonal(slope, buffers_1km, fun='mean', na.rm=TRUE)
+head(slope_1km)
+
+# Mean TRI within 1km
+tri_1km <- terra::zonal(tri, buffers_1km, fun='mean', na.rm=TRUE)
+head(tri_1km)
+
+# Chek zonal()
+print(elevation_1km)
+names(elevation_1km)
+str(elevation_1km)
+
+# Add buffer values to camera_traps
+camera_traps$elevation_1km <- elevation_1km$dem
+camera_traps$slope_1km <- slope_1km$slope
+camera_traps$tri_1km <- tri_1km$TRI
+
+# Check result 
+print(camera_traps)
+
+# Compare point values with buffer values
+summary(camera_traps$elevation)      # Point value
+summary(camera_traps$elevation_1km)  # Mean within 1km
+
+summary(camera_traps$slope)          
+summary(camera_traps$slope_1km)      
+
+summary(camera_traps$tri)            
+summary(camera_traps$tri_1km)     
 
