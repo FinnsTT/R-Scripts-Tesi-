@@ -251,6 +251,5 @@ cat("- Distance to Konkiep River\n")
 cat("- Distance to water points\n")
 cat("- Distance to tourist road\n")
 cat("- Distance to staff buildings\n")
-cat("\nReady for N-Mixture modeling!\n")
 
 ## END OF SCRIPT
