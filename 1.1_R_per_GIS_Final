@@ -252,4 +252,20 @@ cat("- Distance to water points\n")
 cat("- Distance to tourist road\n")
 cat("- Distance to staff buildings\n")
 
+# EXPORT FINAL DATASET WITH ALL COVARIATES
+
+cat("\n=== Exporting final dataset ===\n")
+
+# Convert to dataframe
+camera_traps_final <- as.data.frame(camera_traps)
+
+# Check structure
+cat("Final dataset dimensions:", nrow(camera_traps_final), "rows ×", 
+    ncol(camera_traps_final), "columns\n")
+
+# Export to CSV
+write.csv(camera_traps_final, 
+          "FINAL_camera_traps_covariates.csv", 
+          row.names = FALSE)
+
 ## END OF SCRIPT
