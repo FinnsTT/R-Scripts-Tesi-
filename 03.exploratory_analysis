@@ -4,3 +4,216 @@
 #          - Competitor presence (leopards)
 #          - Prey availability for competitors
 #          - Environmental covariates
+
+# SECTION 1: SETUP AND LOAD DATA
+
+library(dplyr)
+setwd("C:\\Users\\Dell\\Desktop\\codici tesi\\file GIS")
+
+# Load data files
+hyena_summary <- read.csv("station_detection_summary.csv")
+covariates <- read.csv("FINAL_camera_traps_covariates.csv")
+
+all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
+
+# SECTION 2: IDENTIFY HOTSPOTS AND ANALYZE SPECIES DISTRIBUTIONS
+
+# Identify hotspot stations (≥10 detections)
+hotspots <- hyena_summary[hyena_summary$total_detections >= 10, ]
+hotspot_ids <- hotspots$Station
+
+# Ungulate analysis
+ungulate_species <- c("Oryx gazella", "Equus zebra", 
+                      "Tragelaphus strepsiceros", "Oreotragus oreotragus")
+ungulates <- all_detections[all_detections$Species %in% ungulate_species, ]
+ungulate_counts <- as.data.frame(table(ungulates$Station))
+colnames(ungulate_counts) <- c("Station", "Ungulate_Detections")
+
+# Leopard analysis
+leopards <- all_detections[all_detections$Species == "Panthera pardus", ]
+if(nrow(leopards) > 0) {
+  leopard_counts <- as.data.frame(table(leopards$Station))
+  colnames(leopard_counts) <- c("Station", "Leopard_Detections")
+}
+
+# SECTION 3: MERGE DATASETS
+
+# Merge all data
+data <- merge(hyena_summary, covariates, 
+              by.x = "Station", by.y = names(covariates)[1])
+data <- merge(data, ungulate_counts, by = "Station", all.x = TRUE)
+data$Ungulate_Detections[is.na(data$Ungulate_Detections)] <- 0
+
+if(nrow(leopards) > 0) {
+  data <- merge(data, leopard_counts, by = "Station", all.x = TRUE)
+  data$Leopard_Detections[is.na(data$Leopard_Detections)] <- 0
+}
+
+hotspot_data <- data[data$Station %in% hotspot_ids, ]
+
+# SECTION 4: BARPLOT - TOP 10 STATIONS
+
+par(mfrow=c(1,1), mar=c(8, 4, 4, 2))
+
+data_sorted <- data[order(-data$total_detections), ]
+top10 <- head(data_sorted, 10)
+colors <- ifelse(top10$Station %in% hotspot_ids, "darkorchid4", "steelblue")
+
+barplot(top10$total_detections,
+        names.arg = top10$Station,
+        main = "Top 10 Camera Traps - Brown Hyena Detections",
+        ylab = "Total Detection Events",
+        col = colors,
+        las = 2,
+        ylim = c(0, max(top10$total_detections) * 1.1))
+
+abline(h = mean(data$total_detections), col = "olivedrab1", lty = 2, lwd = 2)
+text(5, mean(data$total_detections) + 0.5, 
+     paste("Mean =", round(mean(data$total_detections), 1)), 
+     col = "olivedrab1", pos = 3)
+
+legend("topright", 
+       legend = c("Hotspot (≥10)", "Other stations", "Mean"),
+       fill = c("darkorchid4", "steelblue", NA),
+       border = c("black", "black", NA),
+       lty = c(NA, NA, 2),
+       col = c(NA, NA, "olivedrab1"),
+       lwd = c(NA, NA, 2),
+       bty = "n")
+
+dev.copy(png, "detections_barplot.png", width = 800, height = 600)
+dev.off()
+
+# SECTION 5: SCATTERPLOTS - COVARIATES VS DETECTIONS
+
+# Open PNG device 
+png("scatterplots_covariates.png", width = 1000, height = 1000, units = "px", res = 100)
+par(mfrow=c(2,2), mar=c(4, 4, 3, 1))
+
+# Distance to water vs detection
+plot(data$dist_water_points, data$total_detections,
+     xlab = "Distance to Water Points (m)",
+     ylab = "Hyena Detections",
+     main = "Detections vs Distance to Water",
+     pch = 19, col = "dodgerblue4", cex = 1.2)
+points(hotspot_data$dist_water_points, hotspot_data$total_detections,
+       pch = 19, col = "slategray1", cex = 2)
+if(nrow(data) > 3) {
+  lines(lowess(data$dist_water_points, data$total_detections), 
+        col = "green4", lwd = 2)
+}
+text(hotspot_data$dist_water_points, hotspot_data$total_detections,
+     labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
+
+# Slope vs detection
+plot(data$slope, data$total_detections,
+     xlab = "Slope (degrees)",
+     ylab = "Hyena Detections",
+     main = "Detections vs Slope",
+     pch = 19, col = "dodgerblue4", cex = 1.2)
+points(hotspot_data$slope, hotspot_data$total_detections,
+       pch = 19, col = "slategray1", cex = 2)
+if(nrow(data) > 3) {
+  lines(lowess(data$slope, data$total_detections), 
+        col = "green4", lwd = 2)
+}
+text(hotspot_data$slope, hotspot_data$total_detections,
+     labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
+
+# Distance to road vs detection
+plot(data$dist_tourist_road, data$total_detections,
+     xlab = "Distance to Tourist Road (m)",
+     ylab = "Hyena Detections",
+     main = "Detections vs Distance to Road",
+     pch = 19, col = "dodgerblue4", cex = 1.2)
+points(hotspot_data$dist_tourist_road, hotspot_data$total_detections,
+       pch = 19, col = "slategray1", cex = 2)
+if(nrow(data) > 3) {
+  lines(lowess(data$dist_tourist_road, data$total_detections), 
+        col = "green4", lwd = 2)
+}
+text(hotspot_data$dist_tourist_road, hotspot_data$total_detections,
+     labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
+
+# Ungulate activity vs detection
+plot(data$Ungulate_Detections, data$total_detections,
+     xlab = "Ungulate Detections",
+     ylab = "Hyena Detections",
+     main = "Detections vs Prey Availability",
+     pch = 19, col = "dodgerblue4", cex = 1.2)
+points(hotspot_data$Ungulate_Detections, hotspot_data$total_detections,
+       pch = 19, col = "slategray1", cex = 2)
+if(nrow(data) > 3 & sum(data$Ungulate_Detections > 0) > 2) {
+  lines(lowess(data$Ungulate_Detections, data$total_detections), 
+        col = "green4", lwd = 2)
+}
+text(hotspot_data$Ungulate_Detections, hotspot_data$total_detections,
+     labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
+
+dev.off()
+
+# Reset
+par(mfrow=c(1,1))
+
+# SECTION 6: CORRELATION ANALYSIS
+
+cor_vars <- c("total_detections", "elevation", "slope", "tri", 
+              "dist_water_points", "dist_tourist_road", "dist_fish_river",
+              "Ungulate_Detections")
+cor_data <- data[, cor_vars]
+cor_matrix <- cor(cor_data, use = "complete.obs")
+
+# SECTION 7: EXPORT RESULTS
+
+write.csv(data, "hyena_analysis_complete_dataset.csv", row.names = FALSE)
+write.csv(hotspot_data, "hotspot_characteristics.csv", row.names = FALSE)
+
+# SECTION 8: SUMMARY OUTPUT
+
+cat("\n═══════════════════════════════════════════════════════════════════\n")
+cat("                    EXPLORATORY ANALYSIS COMPLETE                   \n")
+cat("═══════════════════════════════════════════════════════════════════\n\n")
+
+cat("HOTSPOTS (≥10 detections):\n")
+print(hotspots[, c("Station", "total_detections")])
+
+cat("\n\nHOTSPOT CHARACTERISTICS:\n")
+cat("────────────────────────────────────────────────────────\n")
+cat("Elevation:         ", round(mean(hotspot_data$elevation), 0), "m (±", 
+    round(sd(hotspot_data$elevation), 0), ")\n")
+cat("Slope:             ", round(mean(hotspot_data$slope), 1), "° (±", 
+    round(sd(hotspot_data$slope), 1), ")\n")
+cat("Dist to water:     ", round(mean(hotspot_data$dist_water_points), 0), "m (±", 
+    round(sd(hotspot_data$dist_water_points), 0), ")\n")
+cat("Dist to road:      ", round(mean(hotspot_data$dist_tourist_road), 0), "m (±", 
+    round(sd(hotspot_data$dist_tourist_road), 0), ")\n")
+cat("Dist to Konkiep:   ", round(mean(hotspot_data$dist_konkiep_river), 0), "m (±", 
+    round(sd(hotspot_data$dist_konkiep_river), 0), ")\n")
+cat("Ungulate activity: ", sum(hotspot_data$Ungulate_Detections), "detections total\n")
+
+cat("\n\nCORRELATIONS WITH HYENA DETECTIONS:\n")
+cat("────────────────────────────────────────────────────────\n")
+correlations <- cor_matrix[1, -1]
+correlations_sorted <- sort(abs(correlations), decreasing = TRUE)
+for(i in 1:length(correlations_sorted)) {
+  var_name <- names(correlations_sorted)[i]
+  cor_value <- correlations[var_name]
+  cat(sprintf("%-25s: %6.3f", var_name, cor_value))
+  if(abs(cor_value) > 0.5) cat(" ***")
+  else if(abs(cor_value) > 0.3) cat(" **")
+  else if(abs(cor_value) > 0.15) cat(" *")
+  cat("\n")
+}
+
+cat("\n\nFILES CREATED:\n")
+cat("• detections_barplot.png\n")
+cat("• scatterplots_covariates.png\n")
+cat("• hyena_analysis_complete_dataset.csv\n")
+cat("• hotspot_characteristics.csv\n")
+
+cat("\n═══════════════════════════════════════════════════════════════════\n")
+cat("Next step: N-Mixture models (Script 4)\n")
+cat("═══════════════════════════════════════════════════════════════════\n\n")
+
+
+# END OF SCRIPT
