@@ -14,6 +14,7 @@ setwd("C:\\Users\\Dell\\Desktop\\codici tesi\\file GIS")
 hyena_summary <- read.csv("station_detection_summary.csv")
 covariates <- read.csv("FINAL_camera_traps_covariates.csv")
 
+# CHANGE THIS to your actual file name!
 all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
 
 # SECTION 2: IDENTIFY HOTSPOTS AND ANALYZE SPECIES DISTRIBUTIONS
@@ -29,12 +30,17 @@ ungulates <- all_detections[all_detections$Species %in% ungulate_species, ]
 ungulate_counts <- as.data.frame(table(ungulates$Station))
 colnames(ungulate_counts) <- c("Station", "Ungulate_Detections")
 
-# Leopard analysis
-leopards <- all_detections[all_detections$Species == "Panthera pardus", ]
-if(nrow(leopards) > 0) {
-  leopard_counts <- as.data.frame(table(leopards$Station))
-  colnames(leopard_counts) <- c("Station", "Leopard_Detections")
-}
+# Human disturbance analysis
+human_species <- c("Homo sapiens", "Vehicles") 
+humans <- all_detections[all_detections$Species %in% human_species, ]
+human_counts <- as.data.frame(table(humans$Station))
+colnames(human_counts) <- c("Station", "Human_Activity")
+
+# Competitor analysis (cheetah + leopards)
+competitor_species <- c("Panthera pardus", "Acinonyx jubatus")
+competitors <- all_detections[all_detections$Species %in% competitor_species, ]
+competitor_counts <- as.data.frame(table(competitors$Station))
+colnames(competitor_counts) <- c("Station", "Competitor_Detections")
 
 # SECTION 3: MERGE DATASETS
 
@@ -48,6 +54,16 @@ if(nrow(leopards) > 0) {
   data <- merge(data, leopard_counts, by = "Station", all.x = TRUE)
   data$Leopard_Detections[is.na(data$Leopard_Detections)] <- 0
 }
+
+hotspot_data <- data[data$Station %in% hotspot_ids, ]
+
+# Add human activity
+data <- merge(data, human_counts, by = "Station", all.x = TRUE)
+data$Human_Activity[is.na(data$Human_Activity)] <- 0
+
+# Add competitor detections
+data <- merge(data, competitor_counts, by = "Station", all.x = TRUE)
+data$Competitor_Detections[is.na(data$Competitor_Detections)] <- 0
 
 hotspot_data <- data[data$Station %in% hotspot_ids, ]
 
@@ -81,7 +97,7 @@ legend("topright",
        lwd = c(NA, NA, 2),
        bty = "n")
 
-dev.copy(png, "detections_barplot.png", width = 800, height = 600)
+dev.copy(png, "detections_barplot.png", width = 800, height = 600, units = "px", res = 100)
 dev.off()
 
 # SECTION 5: SCATTERPLOTS - COVARIATES VS DETECTIONS
@@ -120,34 +136,34 @@ if(nrow(data) > 3) {
 text(hotspot_data$slope, hotspot_data$total_detections,
      labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
 
-# Distance to road vs detection
-plot(data$dist_tourist_road, data$total_detections,
-     xlab = "Distance to Tourist Road (m)",
+# Human activity vs detections
+plot(data$Human_Activity, data$total_detections,
+     xlab = "Human Activity (detections)",
      ylab = "Hyena Detections",
-     main = "Detections vs Distance to Road",
+     main = "Detections vs Human Disturbance",
      pch = 19, col = "dodgerblue4", cex = 1.2)
-points(hotspot_data$dist_tourist_road, hotspot_data$total_detections,
+points(hotspot_data$Human_Activity, hotspot_data$total_detections,
        pch = 19, col = "slategray1", cex = 2)
-if(nrow(data) > 3) {
-  lines(lowess(data$dist_tourist_road, data$total_detections), 
+if(nrow(data) > 3 & sum(data$Human_Activity > 0) > 2) {
+  lines(lowess(data$Human_Activity, data$total_detections), 
         col = "green4", lwd = 2)
 }
-text(hotspot_data$dist_tourist_road, hotspot_data$total_detections,
+text(hotspot_data$Human_Activity, hotspot_data$total_detections,
      labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
 
-# Ungulate activity vs detection
-plot(data$Ungulate_Detections, data$total_detections,
-     xlab = "Ungulate Detections",
+# Competitor activity vs detections
+plot(data$Competitor_Detections, data$total_detections,
+     xlab = "Competitor Detections (Leopard + Cheetah)",
      ylab = "Hyena Detections",
-     main = "Detections vs Prey Availability",
+     main = "Detections vs Competitor Presence",
      pch = 19, col = "dodgerblue4", cex = 1.2)
-points(hotspot_data$Ungulate_Detections, hotspot_data$total_detections,
+points(hotspot_data$Competitor_Detections, hotspot_data$total_detections,
        pch = 19, col = "slategray1", cex = 2)
-if(nrow(data) > 3 & sum(data$Ungulate_Detections > 0) > 2) {
-  lines(lowess(data$Ungulate_Detections, data$total_detections), 
+if(nrow(data) > 3 & sum(data$Competitor_Detections > 0) > 2) {
+  lines(lowess(data$Competitor_Detections, data$total_detections), 
         col = "green4", lwd = 2)
 }
-text(hotspot_data$Ungulate_Detections, hotspot_data$total_detections,
+text(hotspot_data$Competitor_Detections, hotspot_data$total_detections,
      labels = hotspot_data$Station, pos = 3, col = "gray1", cex = 0.8)
 
 dev.off()
@@ -158,8 +174,8 @@ par(mfrow=c(1,1))
 # SECTION 6: CORRELATION ANALYSIS
 
 cor_vars <- c("total_detections", "elevation", "slope", "tri", 
-              "dist_water_points", "dist_tourist_road", "dist_fish_river",
-              "Ungulate_Detections")
+              "dist_water_points", "Human_Activity", "Competitor_Detections")
+
 cor_data <- data[, cor_vars]
 cor_matrix <- cor(cor_data, use = "complete.obs")
 
@@ -190,6 +206,8 @@ cat("Dist to road:      ", round(mean(hotspot_data$dist_tourist_road), 0), "m (�
 cat("Dist to Konkiep:   ", round(mean(hotspot_data$dist_konkiep_river), 0), "m (±", 
     round(sd(hotspot_data$dist_konkiep_river), 0), ")\n")
 cat("Ungulate activity: ", sum(hotspot_data$Ungulate_Detections), "detections total\n")
+cat("Human activity:    ", sum(hotspot_data$Human_Activity), "detections total\n")
+cat("Competitor activity:", sum(hotspot_data$Competitor_Detections), "detections total\n")
 
 cat("\n\nCORRELATIONS WITH HYENA DETECTIONS:\n")
 cat("────────────────────────────────────────────────────────\n")
@@ -210,10 +228,6 @@ cat("• detections_barplot.png\n")
 cat("• scatterplots_covariates.png\n")
 cat("• hyena_analysis_complete_dataset.csv\n")
 cat("• hotspot_characteristics.csv\n")
-
-cat("\n═══════════════════════════════════════════════════════════════════\n")
-cat("Next step: N-Mixture models (Script 4)\n")
-cat("═══════════════════════════════════════════════════════════════════\n\n")
 
 
 # END OF SCRIPT
