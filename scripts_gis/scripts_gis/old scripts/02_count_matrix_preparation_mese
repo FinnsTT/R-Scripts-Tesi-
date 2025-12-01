@@ -1,0 +1,299 @@
+# BROWN HYENA DETECTION DATA PROCESSING, Fish River Canyon, Namibia
+# Process camera trap detection data and create count matrix for N-Mixture modeling (71 camera traps × 21 sampling periods)
+
+# Install packages
+# install.packages(c("dplyr", "tidyr", "lubridate"))
+
+# Load required packages
+library(dplyr)
+library(tidyr)
+library(lubridate)
+
+# Set working directory
+setwd("C:\\Users\\Dell\\Desktop\\codici tesi\\file GIS")
+
+# SECTION 2: LOAD DETECTION DATA
+
+# Load camera trap detection data
+# File should have columns: Sampling, Station, Species, Date, Time, FileName
+detections <- read.csv("DATA-15min_Sampling1-21_Parahyena_brunnea.csv", stringsAsFactors = FALSE)
+
+cat("Detection data loaded\n")
+cat("Total rows:", nrow(detections), "\n")
+cat("Date range:", min(detections$Date), "to", max(detections$Date), "\n")
+
+# Check structure
+str(detections)
+head(detections)
+
+# SECTION 3: DATA QUALITY CHECKS
+
+cat("\n=== Data Quality Checks ===\n")
+
+# Check unique stations
+unique_stations <- unique(detections$Station)
+cat("Unique camera trap stations:", length(unique_stations), "\n")
+cat("Stations:", paste(sort(unique_stations), collapse=", "), "\n")
+
+# Check unique sampling periods
+unique_samplings <- unique(detections$Sampling)
+cat("\nUnique sampling periods:", length(unique_samplings), "\n")
+cat("Samplings:", paste(sort(unique_samplings), collapse=", "), "\n")
+
+# Verify data contains only Parahyaena brunnea
+unique_species <- unique(detections$Species)
+cat("\nSpecies in dataset:", unique_species, "\n")
+
+# SECTION 4: CREATE COUNT MATRIX
+
+cat("\n=== Creating count matrix ===\n")
+
+# Simple frequency table to count the number of detection events per station per sampling
+count_matrix <- table(detections$Station, detections$Sampling)
+count_matrix <- as.data.frame.matrix(count_matrix)
+
+cat("Count matrix dimensions:", nrow(count_matrix), "stations ×", 
+    ncol(count_matrix), "samplings\n")
+
+# Check the matrix
+cat("\nFirst few rows and columns:\n")
+print(count_matrix[1:5, 1:5])
+
+# Summary statistics
+cat("\nCount matrix summary:\n")
+cat("Total detections:", sum(count_matrix), "\n")
+cat("Mean detections per station per sampling:", 
+    round(mean(as.matrix(count_matrix)), 2), "\n")
+cat("Max detections in single station-sampling:", max(count_matrix), "\n")
+
+# Count of zeros (non-detections)
+total_cells <- nrow(count_matrix) * ncol(count_matrix)
+zero_cells <- sum(count_matrix == 0)
+cat("Proportion of zeros:", round(zero_cells/total_cells * 100, 1), "%\n")
+
+# SECTION 5: CHECK FOR MISSING STATIONS
+
+cat("\n=== Checking for missing stations ===\n")
+
+# Expected 71 stations (FR01 to FR71)
+expected_stations <- paste0("FR", sprintf("%02d", 1:71))
+
+# Which stations are in the data?
+actual_stations <- rownames(count_matrix)
+
+# Missing stations
+missing_stations <- setdiff(expected_stations, actual_stations)
+
+if(length(missing_stations) > 0) {
+  cat("WARNING: Missing stations (no hyena detections):\n")
+  cat(paste(missing_stations, collapse=", "), "\n")
+  cat("\nThese will be added as rows of zeros\n")
+
+# Create empty rows for missing stations
+  missing_matrix <- matrix(0, 
+                           nrow = length(missing_stations), 
+                           ncol = ncol(count_matrix))
+  rownames(missing_matrix) <- missing_stations
+  colnames(missing_matrix) <- colnames(count_matrix)
+  
+  # Combine with existing data
+  count_matrix <- rbind(count_matrix, missing_matrix)
+  
+  # Sort by station name
+  count_matrix <- count_matrix[order(rownames(count_matrix)), ]
+  
+} else {
+  cat("All 71 stations present in dataset!\n")
+}  
+
+# Final check
+cat("Final count matrix:", nrow(count_matrix), "stations ×", 
+    ncol(count_matrix), "samplings\n")
+
+# SECTION 6: VISUALIZE DETECTION PATTERNS
+
+cat("\n=== Detection patterns ===\n")
+
+# Detections per station (total across all samplings)
+detections_per_station <- rowSums(count_matrix)
+cat("Top 5 stations with most hyena detections:\n")
+print(head(sort(detections_per_station, decreasing=TRUE), 5))
+
+cat("\nBottom 5 stations (least detections):\n")
+print(head(sort(detections_per_station, decreasing=FALSE), 5))
+
+# Detections per sampling period
+detections_per_sampling <- colSums(count_matrix)
+cat("\nDetections per sampling period:\n")
+print(detections_per_sampling)
+
+# Simple barplot
+par(mfrow=c(1,2))
+barplot(sort(detections_per_station, decreasing=TRUE), 
+        main="Detections per Station", 
+        xlab="Station (sorted)", 
+        ylab="Total detections",
+        las=2, cex.names=0.5)
+
+barplot(detections_per_sampling, 
+        main="Detections per Sampling Period", 
+        xlab="Sampling", 
+        ylab="Total detections",
+        las=2)
+par(mfrow=c(1,1))
+
+# SECTION 6: VISUALIZE DETECTION PATTERNS
+
+cat("\n=== Detection patterns ===\n")
+
+# Detections per station (total across all samplings)
+detections_per_station <- rowSums(count_matrix)
+cat("Top 5 stations with most hyena detections:\n")
+print(head(sort(detections_per_station, decreasing=TRUE), 5))
+
+cat("\nBottom 5 stations (least detections):\n")
+print(head(sort(detections_per_station, decreasing=FALSE), 5))
+
+# Detections per sampling period
+detections_per_sampling <- colSums(count_matrix)
+cat("\nDetections per sampling period:\n")
+print(detections_per_sampling)
+
+# Simple barplot
+par(mfrow=c(1,2))
+barplot(sort(detections_per_station, decreasing=TRUE), 
+        main="Detections per Station", 
+        xlab="Station (sorted)", 
+        ylab="Total detections",
+        las=2, cex.names=0.5)
+
+barplot(detections_per_sampling, 
+        main="Detections per Sampling Period", 
+        xlab="Sampling", 
+        ylab="Total detections",
+        las=2)
+par(mfrow=c(1,1))
+
+# SECTION 7: PREPARE DATA FOR N-MIXTURE MODELS
+
+cat("\n=== Preparing data for unmarked package ===\n")
+
+# Convert to matrix
+y_matrix <- as.matrix(count_matrix)
+
+# Create station ID dataframe (to match with covariates later)
+station_info <- data.frame(
+  Station = rownames(count_matrix),
+  row_number = 1:nrow(count_matrix),
+  total_detections = rowSums(count_matrix),
+  num_samplings_detected = rowSums(count_matrix > 0)
+)
+
+cat("Station info created\n")
+print(head(station_info))
+
+# Check that station names match covariate file format
+# Covariate file has column "SITE" with values like "FR01", "FR02", etc.
+
+cat("\nStation name format check:\n")
+cat("Example stations:", head(station_info$Station, 3), "\n")
+
+# SECTION 8: EXPORT DATA
+
+cat("\n=== Exporting data ===\n")
+
+# Export count matrix
+write.csv(count_matrix, "hyena_count_matrix.csv", row.names=TRUE)
+cat("Count matrix saved: hyena_count_matrix.csv\n")
+
+# Export station info
+write.csv(station_info, "station_detection_summary.csv", row.names=FALSE)
+cat("Station summary saved: station_detection_summary.csv\n")
+
+# Export the y matrix (for unmarked)
+write.csv(y_matrix, "y_matrix_for_nmixture.csv", row.names=FALSE)
+cat("Y matrix for N-Mixture saved: y_matrix_for_nmixture.csv\n")
+
+#SECTION 9: SUMMARY STATISTICS
+
+cat("\n" , rep("=", 70), "\n", sep="")
+cat("DETECTION DATA SUMMARY\n")
+cat(rep("=", 70), "\n", sep="")
+
+cat("\nDataset structure:\n")
+cat("- Camera traps:", nrow(count_matrix), "\n")
+cat("- Sampling periods:", ncol(count_matrix), "\n")
+cat("- Total detection events:", sum(count_matrix), "\n")
+cat("- Date range:", min(detections$Date), "to", max(detections$Date), "\n")
+
+cat("\nDetection frequency:\n")
+cat("- Stations with 0 detections:", sum(detections_per_station == 0), "\n")
+cat("- Stations with 1-5 detections:", 
+    sum(detections_per_station >= 1 & detections_per_station <= 5), "\n")
+cat("- Stations with 6-10 detections:", 
+    sum(detections_per_station >= 6 & detections_per_station <= 10), "\n")
+cat("- Stations with >10 detections:", sum(detections_per_station > 10), "\n")
+
+cat("\nNaive occupancy (proportion of stations with ≥1 detection):\n")
+naive_occupancy <- sum(detections_per_station > 0) / nrow(count_matrix)
+cat(round(naive_occupancy * 100, 1), "%\n")
+
+cat("\nData sparsity:\n")
+cat("- Proportion of zero counts:", 
+    round(sum(count_matrix == 0) / (nrow(count_matrix) * ncol(count_matrix)) * 100, 1), 
+    "%\n")
+
+cat("\n", rep("=", 70), "\n", sep="")
+cat("DATA PROCESSING COMPLETE\n")
+cat(rep("=", 70), "\n", sep="")
+
+cat("\nNext steps:\n")
+cat("1. Load FINAL_camera_traps_covariates.csv (spatial covariates)\n")
+cat("2. Load y_matrix_for_nmixture.csv (detection counts)\n")
+cat("3. Merge by station ID\n")
+cat("4. Run N-Mixture models using unmarked package\n")
+
+cat("\nFiles created:\n")
+cat("- hyena_count_matrix.csv (full count matrix with station names)\n")
+cat("- station_detection_summary.csv (summary statistics per station)\n")
+cat("- y_matrix_for_nmixture.csv (clean matrix for unmarked package)\n")
+
+# SECTION 10: TEMPORAL PATTERNS
+
+cat("\n=== Optional: Checking temporal patterns ===\n")
+
+# to analyze detection patterns by month/season convert date column to proper date format
+detections$Date_parsed <- as.Date(detections$Date, format="%Y-%m-%d")
+detections$Month <- month(detections$Date_parsed)
+
+# Load covariate data
+covs <- read.csv("camera_traps_covariates.csv")
+
+# Check what columns are in the file
+covs <- read.csv("camera_traps_covariates.csv")
+names(covs)
+
+# Filter hotspot stations
+hotspots <- covs[covs$SITE %in% c("FR16", "FR21", "FR29", "FR64"), ]
+
+# View relevant columns
+hotspots[, c("SITE", "elevation", "slope", "slope_1km", 
+             "dist_water_points", "dist_tourist_road", 
+             "dist_staff_buildings", "dist_konkiep_river")]
+
+detections$Year <- year(detections$Date_parsed)
+detections$Season <- ifelse(detections$Month %in% c(12, 1, 2), "Summer",
+                            ifelse(detections$Month %in% c(3, 4, 5), "Autumn",
+                                   ifelse(detections$Month %in% c(6, 7, 8), "Winter", "Spring")))
+
+# Detections by season
+cat("\nDetections by season:\n")
+print(table(detections$Season))
+
+# Detections by year
+cat("\nDetections by year:\n")
+print(table(detections$Year))
+
+cat("\nScript complete!\n")
+
+# END OF SCRIPT
