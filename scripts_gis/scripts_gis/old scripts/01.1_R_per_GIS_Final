@@ -1,0 +1,271 @@
+## 1: SETUP AND LOAD PACKAGES
+
+# Install packages
+# install.packages(c("terra", "sf", "dplyr", "spatialEco", "raster", 
+#                    "sp", "rasterVis", "spatstat"))
+
+# Load required packages
+library(terra)      # Modern raster analysis
+library(sf)         # Vector data handling
+library(dplyr)      # Data manipulation
+library(spatialEco) # Terrain metrics (TPI)
+library(raster)     # Legacy raster functions
+library(sp)         # Spatial objects
+library(rasterVis)  # Raster visualization
+library(spatstat)   # Spatial statistics
+
+# Set working directory 
+setwd("C:\\Users\\Dell\\Desktop\\codici tesi\\file GIS")
+
+## 2: LOAD SPATIAL DATA
+
+# Load DEM (Digital Elevation Model)
+dem <- terra::rast('dem.tif')
+cat("DEM loaded successfully\n")
+print(dem)
+
+# Load camera trap locations (71 stations)
+camera_traps <- terra::vect('camera_traps.shp')
+cat("Camera traps loaded:", nrow(camera_traps), "stations\n")
+
+# Load camera trap locations (71 stations)
+camera_traps <- terra::vect('camera_traps.shp')
+cat("Camera traps loaded:", nrow(camera_traps), "stations\n")
+
+# Load water features
+fish_river <- terra::vect('fish_river.shp')
+konkiep_river <- terra::vect('konkiep_river.shp')
+water_points <- terra::vect('water_points.shp')
+
+# Load anthropic features
+tourist_road <- terra::vect('tourist_road.shp')
+staff_buildings <- terra::vect('staff_buildings.shp')
+
+# Load study area boundary
+study_area <- terra::vect('study_area.shp')
+
+cat("All spatial data loaded successfully\n")
+
+## 3: CHECK AND REPROJECT DATA
+
+# Check coordinate reference systems
+cat("\nChecking projections...\n")
+cat("DEM CRS:", crs(dem, describe=TRUE)$name, "\n")
+cat("Camera traps CRS:", crs(camera_traps, describe=TRUE)$name, "\n")
+
+# Reproject geographic layers to match DEM (UTM 33S)
+fish_river_utm <- terra::project(fish_river, crs(dem))
+konkiep_river_utm <- terra::project(konkiep_river, crs(dem))
+water_points_utm <- terra::project(water_points, crs(dem))
+tourist_road_utm <- terra::project(tourist_road, crs(dem))
+staff_buildings_utm <- terra::project(staff_buildings, crs(dem))
+
+cat("All layers reprojected to UTM 33S\n")
+
+# Visual check - plot all data
+plot(dem, ext=ext(camera_traps)*1.2, main="Study Area - All Spatial Data")
+plot(fish_river_utm, add=TRUE, col='mediumpurple3', lwd=3)
+plot(konkiep_river_utm, add=TRUE, col='mediumpurple3', lwd=3, lty=2)
+plot(water_points_utm, add=TRUE, col='skyblue1', pch=19, cex=1)
+plot(tourist_road_utm, add=TRUE, col='firebrick', lwd=1)
+plot(staff_buildings_utm, add=TRUE, col='thistle1', pch=15)
+plot(camera_traps, add=TRUE, col='snow2', pch=17, cex=1)
+
+## 4: EXTRACT ELEVATION VALUES AT CAMERA TRAPS LOCATIONS
+
+cat("\n=== Extracting elevation values ===\n")
+
+# Extract elevation at camera trap points
+elevation_data <- terra::extract(dem, camera_traps, xy=TRUE)
+
+# Rename the elevation column for clarity
+names(elevation_data)[2] <- "elevation"
+
+# Add elevation values to camera_traps vector
+camera_traps$elevation <- elevation_data$elevation
+
+# Add X and Y coordinates
+coords <- terra::crds(camera_traps)
+camera_traps$X <- coords[, "x"]
+camera_traps$Y <- coords[, "y"]
+
+# Summary statistics
+cat("Elevation summary (m a.s.l.):\n")
+print(summary(camera_traps$elevation))
+
+## 5: CALCULATE TERRAIN METRICS that affect hyenas habitat
+
+cat("\n=== Calculating terrain metrics ===\n")
+
+# Calculate slope (degrees)
+slope <- terra::terrain(dem, v='slope', neighbors=8, unit='degrees')
+cat("Slope calculated\n")
+
+# Calculate TRI (Terrain Ruggedness Index)
+tri <- terra::terrain(dem, v='TRI', neighbors=8)
+cat("TRI calculated\n")
+
+# Calculate aspect (direction slope faces, degrees)
+aspect <- terra::terrain(dem, v='aspect', neighbors=8, unit='degrees')
+cat("Aspect calculated\n")
+
+# Calculate TPI (Topographic Position Index) using spatialEco
+tpi <- spatialEco::tpi(dem, scale=1000, win='circle', normalize=FALSE)
+cat("TPI calculated\n")
+
+## 6: EXTRACT TERRAIN VALUES AT CAMERA TRAPS
+
+cat("\n=== Extracting terrain values ===\n")
+
+# Extract terrain metrics at camera trap points
+slope_data <- terra::extract(slope, camera_traps)
+tri_data <- terra::extract(tri, camera_traps)
+aspect_data <- terra::extract(aspect, camera_traps)
+tpi_data <- terra::extract(tpi, camera_traps)
+
+# Add to camera_traps vector
+camera_traps$slope <- slope_data[,2]
+camera_traps$tri <- tri_data[,2]
+camera_traps$aspect <- aspect_data[,2]
+camera_traps$tpi <- tpi_data[,2]
+
+# Summary statistics
+cat("\nTerrain metrics summary:\n")
+cat("Slope (degrees):\n")
+print(summary(camera_traps$slope))
+cat("\nTRI (ruggedness):\n")
+print(summary(camera_traps$tri))
+
+## 7: CALCULATE DISTANCE RASTERS
+
+cat("\n=== Calculating distance rasters ===\n")
+cat("This may take several minutes...\n")
+
+# Distance to Fish River
+dist_fish_river <- terra::distance(dem, fish_river_utm)
+cat("Distance to Fish River calculated\n")
+
+# Distance to Konkiep River
+dist_konkiep_river <- terra::distance(dem, konkiep_river_utm)
+cat("Distance to Konkiep River calculated\n")
+
+# Distance to water points (important for hyenas!)
+dist_water_points <- terra::distance(dem, water_points_utm)
+cat("Distance to water points calculated\n")
+
+# Distance to tourist road (anthropogenic disturbance)
+dist_tourist_road <- terra::distance(dem, tourist_road_utm)
+cat("Distance to tourist road calculated\n")
+
+# Distance to staff buildings (human presence)
+dist_staff_buildings <- terra::distance(dem, staff_buildings_utm)
+cat("Distance to staff buildings calculated\n")
+
+## 8: EXTRACT DISTANCE VALUES AT CAMERA TRAPS LOCATIONS
+
+cat("\n=== Extracting distance values ===\n")
+
+# Extract distance values at camera trap locations
+dist_fish_data <- terra::extract(dist_fish_river, camera_traps)
+dist_konkiep_data <- terra::extract(dist_konkiep_river, camera_traps)
+dist_water_data <- terra::extract(dist_water_points, camera_traps)
+dist_road_data <- terra::extract(dist_tourist_road, camera_traps)
+dist_buildings_data <- terra::extract(dist_staff_buildings, camera_traps)
+
+# Add to camera_traps vector
+camera_traps$dist_fish_river <- dist_fish_data[,2]
+camera_traps$dist_konkiep_river <- dist_konkiep_data[,2]
+camera_traps$dist_water_points <- dist_water_data[,2]
+camera_traps$dist_tourist_road <- dist_road_data[,2]
+camera_traps$dist_staff_buildings <- dist_buildings_data[,2]
+
+# Summary statistics for key distances
+cat("\nDistance summary (meters):\n")
+cat("Distance to water points:\n")
+print(summary(camera_traps$dist_water_points))
+cat("\nDistance to Fish River:\n")
+print(summary(camera_traps$dist_fish_river))
+
+## 9: BUFFER ANALYSIS (1km radius)
+
+cat("\n=== Calculating landscape-scale metrics (1km buffer) ===\n")
+
+# Create 1km buffers around each camera trap
+buffers_1km <- terra::buffer(camera_traps, width=1000)
+
+# Calculate mean elevation within 1km
+elevation_1km <- terra::zonal(dem, buffers_1km, fun='mean', na.rm=TRUE)
+cat("Mean elevation in 1km buffer calculated\n")
+
+# Calculate mean slope within 1km
+slope_1km <- terra::zonal(slope, buffers_1km, fun='mean', na.rm=TRUE)
+cat("Mean slope in 1km buffer calculated\n")
+
+# Calculate mean TRI within 1km
+tri_1km <- terra::zonal(tri, buffers_1km, fun='mean', na.rm=TRUE)
+cat("Mean TRI in 1km buffer calculated\n")
+
+# Add buffer values to camera_traps
+camera_traps$elevation_1km <- elevation_1km$dem
+camera_traps$slope_1km <- slope_1km$slope
+camera_traps$tri_1km <- tri_1km$TRI
+
+# Compare point vs buffer values
+cat("\nComparison: Point values vs 1km buffer means\n")
+cat("Elevation - Point:", round(mean(camera_traps$elevation),1), 
+    "m | Buffer:", round(mean(camera_traps$elevation_1km),1), "m\n")
+cat("Slope - Point:", round(mean(camera_traps$slope),2), 
+    "° | Buffer:", round(mean(camera_traps$slope_1km),2), "°\n")
+
+## 10: EXPORT FINAL DATASET
+
+cat("\n=== Exporting final covariate dataset ===\n")
+
+# Convert to dataframe
+camera_traps_df <- as.data.frame(camera_traps)
+
+# Check final structure
+cat("Final dataset dimensions:\n")
+cat("Rows (camera traps):", nrow(camera_traps_df), "\n")
+cat("Columns (covariates):", ncol(camera_traps_df), "\n")
+
+# Display column names
+cat("\nFinal covariates:\n")
+print(names(camera_traps_df))
+
+# Export to CSV
+write.csv(camera_traps_df, "FINAL_camera_traps_covariates.csv", row.names=FALSE)
+
+cat("\n=== COVARIATE EXTRACTION COMPLETE ===\n")
+cat("Output file: FINAL_camera_traps_covariates.csv\n")
+cat("Total camera traps:", nrow(camera_traps_df), "\n")
+cat("Total covariates:", ncol(camera_traps_df), "\n")
+cat("\nCovariates extracted:\n")
+cat("- Elevation (point + 1km buffer mean)\n")
+cat("- Slope (point + 1km buffer mean)\n")
+cat("- TRI - Terrain Ruggedness (point + 1km buffer mean)\n")
+cat("- Aspect\n")
+cat("- TPI - Topographic Position Index\n")
+cat("- Distance to Fish River\n")
+cat("- Distance to Konkiep River\n")
+cat("- Distance to water points\n")
+cat("- Distance to tourist road\n")
+cat("- Distance to staff buildings\n")
+
+# EXPORT FINAL DATASET WITH ALL COVARIATES
+
+cat("\n=== Exporting final dataset ===\n")
+
+# Convert to dataframe
+camera_traps_final <- as.data.frame(camera_traps)
+
+# Check structure
+cat("Final dataset dimensions:", nrow(camera_traps_final), "rows ×", 
+    ncol(camera_traps_final), "columns\n")
+
+# Export to CSV
+write.csv(camera_traps_final, 
+          "FINAL_camera_traps_covariates.csv", 
+          row.names = FALSE)
+
+## END OF SCRIPT
