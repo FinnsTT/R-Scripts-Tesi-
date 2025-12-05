@@ -1,0 +1,261 @@
+#### Identifies optimal analysis period and tests occasion length sensitivity
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(gridExtra)
+
+setwd("C://Users//Dell//Desktop//codici tesi//file GIS")
+
+# PART 1: LOAD DATA
+
+effort <- read.csv("sampling_effort.csv", stringsAsFactors = FALSE)
+all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
+all_detections$Date <- as.Date(all_detections$Date)
+
+cat("\n=== DATA LOADED ===")
+cat("\nDetections:", nrow(all_detections), "records")
+cat("\nDate range:", as.character(min(all_detections$Date)), "to", 
+    as.character(max(all_detections$Date)), "\n\n")
+
+# PART 2: ANALYZE CAMERA COVERAGE OVER TIME
+
+#Separatore punto e virgola
+effort <- read.csv("sampling_effort.csv", sep = ";", stringsAsFactors = FALSE)
+names(effort)
+
+# Find columns with days.diff.S1, days.diff.S2, etc.
+sampling_cols <- grep("^days\\.diff\\.S[0-9]+$", names(effort), value = TRUE)
+
+# Extract sampling numbers (S1, S2, etc.)
+sampling_nums <- gsub("days\\.diff\\.", "", sampling_cols)
+
+coverage_summary <- data.frame(
+  Sampling = sampling_nums,
+  N_Active_Cameras = NA,
+  Start_Date = NA,
+  End_Date = NA,
+  Duration_Days = NA
+)
+
+for(i in 1:length(sampling_cols)) {
+  days_col <- sampling_cols[i]
+  samp_num <- sampling_nums[i]
+  
+  # Count cameras with >0 days active
+  n_active <- sum(effort[[days_col]] > 0, na.rm = TRUE)
+  coverage_summary$N_Active_Cameras[i] <- n_active
+  
+  # Get start/end dates
+  start_col <- paste0(samp_num, "_start")
+  end_col <- paste0(samp_num, "_end")
+  
+  if(start_col %in% names(effort)) {
+    dates_start <- as.Date(effort[[start_col]])
+    dates_end <- as.Date(effort[[end_col]])
+    
+    coverage_summary$Start_Date[i] <- as.character(min(dates_start, na.rm = TRUE))
+    coverage_summary$End_Date[i] <- as.character(max(dates_end, na.rm = TRUE))
+    coverage_summary$Duration_Days[i] <- as.numeric(
+      max(dates_end, na.rm = TRUE) - min(dates_start, na.rm = TRUE)
+    )
+  }
+}  
+
+cat("=== CAMERA COVERAGE BY SAMPLING ===\n")
+print(coverage_summary)
+
+max_coverage <- max(coverage_summary$N_Active_Cameras, na.rm = TRUE)
+cat("\n*** Maximum coverage:", max_coverage, "cameras ***\n")
+
+max_periods <- coverage_summary[coverage_summary$N_Active_Cameras == max_coverage, ]
+cat("\nPeriods with maximum coverage:\n")
+print(max_periods[, c("Sampling", "N_Active_Cameras", "Start_Date", "End_Date")])
+
+# Plot coverage timeline
+coverage_summary$Sampling_Num <- as.numeric(gsub("S", "", coverage_summary$Sampling))
+
+p_coverage <- ggplot(coverage_summary, aes(x = Sampling_Num, y = N_Active_Cameras)) +
+  geom_line(size = 1, color = "steelblue") +
+  geom_point(size = 3, color = "steelblue") +
+  geom_hline(yintercept = 71, linetype = "dashed", color = "gold") +
+  labs(title = "Camera Trap Coverage Over Time",
+       subtitle = paste("Target: 71 stations | Max achieved:", max_coverage),
+       x = "Sampling Period", y = "Active Cameras") +
+  theme_bw() +
+  scale_x_continuous(breaks = 1:21)
+
+ggsave("camera_coverage_timeline.png", p_coverage, width = 10, height = 6)
+
+# PART 3: FILTER DATA FOR MAX COVERAGE PERIOD
+
+samplings_to_use <- max_periods$Sampling
+start_date <- min(as.Date(max_periods$Start_Date))
+end_date <- max(as.Date(max_periods$End_Date))
+
+cat("\n=== RECOMMENDED ANALYSIS PERIOD ===")
+cat("\nFrom:", as.character(start_date))
+cat("\nTo:", as.character(end_date))
+cat("\nSamplings:", paste(samplings_to_use, collapse = ", "))
+cat("\nDuration:", as.numeric(end_date - start_date), "days\n")
+
+# Filter hyena detections
+hyena_detections <- all_detections %>%
+  filter(Species == "Parahyaena brunnea",
+         Date >= start_date,
+         Date <= end_date)
+
+cat("\nHyena detections in period:", nrow(hyena_detections))
+cat("\nStations with hyenas:", length(unique(hyena_detections$Station)), "\n\n")
+
+# PART 4: SENSITIVITY ANALYSIS - OCCASION LENGTH
+
+cat("=== SENSITIVITY ANALYSIS: OCCASION LENGTH ===\n")
+
+occasion_lengths <- c(1, 2, 3, 5, 7, 10, 14)
+sensitivity_results <- data.frame()
+
+for(occ_length in occasion_lengths) {
+  
+  # Create occasion IDs
+  hyena_detections$Occasion <- floor(
+    as.numeric(difftime(hyena_detections$Date, start_date, units = "days")) / occ_length
+  ) + 1
+  
+  # Count matrix
+  count_matrix <- hyena_detections %>%
+    group_by(Station, Occasion) %>%
+    summarise(Count = n(), .groups = 'drop') %>%
+    pivot_wider(names_from = Occasion, values_from = Count, values_fill = 0)
+  
+  count_values <- as.matrix(count_matrix[, -1])
+  
+  sensitivity_results <- rbind(sensitivity_results, data.frame(
+    Occasion_Length = occ_length,
+    N_Occasions = ncol(count_values),
+    Total_Counts = sum(count_values),
+    Mean_Count = mean(count_values),
+    Max_Count = max(count_values),
+    Prop_Zeros = sum(count_values == 0) / length(count_values),
+    N_Stations_Detected = sum(rowSums(count_values) > 0)
+  ))
+} 
+
+print(sensitivity_results)
+write.csv(sensitivity_results, "sensitivity_occasion_length.csv", row.names = FALSE)
+
+# Plots
+p1 <- ggplot(sensitivity_results, aes(x = Occasion_Length, y = Mean_Count)) +
+  geom_line(size = 1, color = "darkorchid3") +
+  geom_point(size = 3, color = "darkorchid4") +
+  labs(title = "Mean Count vs Occasion Length",
+       subtitle = "Watch for dramatic increases (double-counting signal)",
+       x = "Occasion Length (days)", y = "Mean Count") +
+  theme_bw()
+
+p2 <- ggplot(sensitivity_results, aes(x = Occasion_Length, y = Max_Count)) +
+  geom_line(size = 1, color = "dodgerblue3") +
+  geom_point(size = 3, color = "dodgerblue4") +
+  labs(title = "Maximum Count vs Occasion Length",
+       subtitle = "Watch for unrealistically high values",
+       x = "Occasion Length (days)", y = "Max Count") +
+  theme_bw()
+
+p3 <- ggplot(sensitivity_results, aes(x = Occasion_Length, y = Prop_Zeros)) +
+  geom_line(size = 1, color = "goldenrod3") +
+  geom_point(size = 3, color = "goldenrod4") +
+  labs(title = "Proportion of Zeros vs Occasion Length",
+       x = "Occasion Length (days)", y = "Proportion Zeros") +
+  theme_bw()
+
+png("sensitivity_plots.png", width = 1200, height = 400, units = "px", res = 100)
+grid.arrange(p1, p2, p3, ncol = 3)
+dev.off()
+
+# PART 5: TEMPORAL PATTERNS
+
+hyena_detections$Month <- month(hyena_detections$Date)
+hyena_detections$Year <- year(hyena_detections$Date)
+
+monthly_counts <- hyena_detections %>%
+  group_by(Year, Month) %>%
+  summarise(N_Detections = n(), .groups = 'drop') %>%
+  mutate(YearMonth = as.Date(paste(Year, Month, "01", sep = "-")))
+
+cat("\n=== DETECTIONS BY MONTH ===\n")
+print(monthly_counts)
+
+p_temporal <- ggplot(monthly_counts, aes(x = YearMonth, y = N_Detections)) +
+  geom_line(size = 1, color = "olivedrab") +
+  geom_point(size = 3, color = "olivedrab") +
+  labs(title = "Hyena Detections Over Time",
+       subtitle = "Use this to define ecological seasons",
+       x = "Date", y = "Detections") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("temporal_pattern_monthly.png", p_temporal, width = 10, height = 6)
+
+#Full dataset temporal pattern
+cat("\n=== TEMPORAL PATTERN - FULL DATASET ===\n")
+
+all_hyenas <- all_detections %>%
+  filter(Species == "Parahyaena brunnea")
+
+all_hyenas$Month <- month(all_hyenas$Date)
+all_hyenas$Year <- year(all_hyenas$Date)
+
+monthly_all <- all_hyenas %>%
+  group_by(Year, Month) %>%
+  summarise(N_Detections = n(), .groups = 'drop') %>%
+  mutate(YearMonth = as.Date(paste(Year, Month, "01", sep = "-")))
+
+cat("Total months in full dataset:", nrow(monthly_all), "\n")
+
+p_temporal_full <- ggplot(monthly_all, aes(x = YearMonth, y = N_Detections)) +
+  geom_line(linewidth = 1, color = "#35b779") +  # Verde viridis
+  geom_point(size = 3, color = "#35b779") +
+  labs(title = "Hyena Detections Over Time - Full Dataset",
+       subtitle = "All detections from start to end of project",
+       x = "Date", y = "Detections") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("temporal_pattern_full_dataset.png", p_temporal_full, width = 12, height = 6)
+
+cat("Plot saved: temporal_pattern_full_dataset.png\n")
+
+# PART 6: EXPORT FILTERED DATA
+
+write.csv(hyena_detections, "hyena_detections_max_coverage.csv", row.names = FALSE)
+
+stations_active <- effort$station[effort[[sampling_cols[1]]] > 0]
+write.csv(data.frame(Station = stations_active), 
+          "stations_max_coverage.csv", row.names = FALSE)
+
+# SUMMARY
+
+cat("\n")
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("                    ANALYSIS COMPLETE                           \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("RECOMMENDATIONS:\n")
+cat("1. Use samplings:", paste(samplings_to_use, collapse = ", "), "\n")
+cat("   Period:", as.character(start_date), "to", as.character(end_date), "\n")
+cat("   Cameras:", max_coverage, "\n\n")
+
+cat("2. Check 'sensitivity_plots.png':\n")
+cat("   - If mean count increases dramatically → double counting\n")
+cat("   - Recommended: 1-3 days occasion length\n\n")
+
+cat("3. Check 'temporal_pattern_monthly.png' for seasonal patterns\n\n")
+
+cat("FILES CREATED:\n")
+cat("• camera_coverage_timeline.png\n")
+cat("• sensitivity_occasion_length.csv\n")
+cat("• sensitivity_plots.png\n")
+cat("• temporal_pattern_monthly.png\n")
+cat("• hyena_detections_max_coverage.csv\n")
+cat("• stations_max_coverage.csv\n")
