@@ -1,0 +1,197 @@
+################################################################################
+# 02_POINT_COVARIATES.R
+# Extract point-based environmental and biotic covariates for camera trap sites
+################################################################################
+
+library(terra)
+library(sf)
+library(dplyr)
+library(spatialEco)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+################################################################################
+# PART 1: LOAD SPATIAL DATA
+################################################################################
+
+dem <- terra::rast('dem.tif')
+camera_traps <- terra::vect('camera_traps.shp')
+fish_river <- terra::vect('fish_river.shp')
+konkiep_river <- terra::vect('konkiep_river.shp')
+water_points <- terra::vect('water_points.shp')
+tourist_road <- terra::vect('tourist_road.shp')
+staff_buildings <- terra::vect('staff_buildings.shp')
+
+cat("\n=== SPATIAL DATA LOADED ===\n")
+cat("Camera traps:", nrow(camera_traps), "\n")
+cat("DEM resolution:", res(dem)[1], "m\n\n")
+
+# Reproject to DEM CRS (UTM 33S)
+fish_river_utm <- terra::project(fish_river, crs(dem))
+konkiep_river_utm <- terra::project(konkiep_river, crs(dem))
+water_points_utm <- terra::project(water_points, crs(dem))
+tourist_road_utm <- terra::project(tourist_road, crs(dem))
+staff_buildings_utm <- terra::project(staff_buildings, crs(dem))
+
+################################################################################
+# PART 2: VISUAL CHECK
+################################################################################
+
+plot(dem, ext=ext(camera_traps)*1.2, main="Study Area Overview",
+     col = hcl.colors(100, "viridis"))
+plot(fish_river_utm, add=TRUE, col='#440154', lwd=3)  # Viridis purple
+plot(konkiep_river_utm, add=TRUE, col='#440154', lwd=3, lty=2)
+plot(water_points_utm, add=TRUE, col='#31688E', pch=19, cex=1)  # Viridis blue
+plot(tourist_road_utm, add=TRUE, col='#FDE725', lwd=2)  # Viridis gold
+plot(staff_buildings_utm, add=TRUE, col='#FDE725', pch=15, cex=1.5)
+plot(camera_traps, add=TRUE, col='#35B779', pch=17, cex=1.2)  # Viridis green
+
+################################################################################
+# PART 3: EXTRACT POINT-BASED TERRAIN METRICS
+################################################################################
+
+cat("=== EXTRACTING TERRAIN METRICS ===\n")
+
+# Elevation
+elevation_data <- terra::extract(dem, camera_traps, xy=TRUE)
+names(elevation_data)[2] <- "elevation"
+camera_traps$elevation <- elevation_data$elevation
+
+# Coordinates
+coords <- terra::crds(camera_traps)
+camera_traps$X <- coords[, "x"]
+camera_traps$Y <- coords[, "y"]
+
+# Slope
+slope <- terra::terrain(dem, v='slope', neighbors=8, unit='degrees')
+camera_traps$slope <- terra::extract(slope, camera_traps)[,2]
+
+# TRI (Terrain Ruggedness Index)
+tri <- terra::terrain(dem, v='TRI', neighbors=8)
+camera_traps$tri <- terra::extract(tri, camera_traps)[,2]
+
+# Aspect
+aspect <- terra::terrain(dem, v='aspect', neighbors=8, unit='degrees')
+camera_traps$aspect <- terra::extract(aspect, camera_traps)[,2]
+
+# TPI (Topographic Position Index)
+tpi <- spatialEco::tpi(dem, scale=1000, win='circle', normalize=FALSE)
+camera_traps$tpi <- terra::extract(tpi, camera_traps)[,2]
+
+cat("Terrain metrics extracted: elevation, slope, TRI, aspect, TPI\n\n")
+
+################################################################################
+# PART 4: CALCULATE DISTANCES
+################################################################################
+
+cat("=== CALCULATING DISTANCES ===\n")
+
+# Distance to Fish River
+dist_fish_river <- terra::distance(dem, fish_river_utm)
+camera_traps$dist_fish_river <- terra::extract(dist_fish_river, camera_traps)[,2]
+
+# Distance to Konkiep River
+dist_konkiep_river <- terra::distance(dem, konkiep_river_utm)
+camera_traps$dist_konkiep_river <- terra::extract(dist_konkiep_river, camera_traps)[,2]
+
+# Distance to water points
+dist_water_points <- terra::distance(dem, water_points_utm)
+camera_traps$dist_water_points <- terra::extract(dist_water_points, camera_traps)[,2]
+
+# Distance to tourist road
+dist_tourist_road <- terra::distance(dem, tourist_road_utm)
+camera_traps$dist_tourist_road <- terra::extract(dist_tourist_road, camera_traps)[,2]
+
+# Distance to staff buildings
+dist_staff_buildings <- terra::distance(dem, staff_buildings_utm)
+camera_traps$dist_staff_buildings <- terra::extract(dist_staff_buildings, camera_traps)[,2]
+
+cat("Distance metrics calculated\n\n")
+
+################################################################################
+# PART 5: BIOTIC COVARIATES
+################################################################################
+
+cat("=== CALCULATING BIOTIC COVARIATES ===\n")
+
+all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
+
+# Human activity
+human_species <- c("Homo sapiens", "Vehicles")
+human_detections <- all_detections[all_detections$Species %in% human_species, ]
+human_counts <- as.data.frame(table(human_detections$Station))
+colnames(human_counts) <- c("Station", "Human_Activity")
+
+# Competitor detections (leopard + cheetah)
+competitor_species <- c("Panthera pardus", "Acinonyx jubatus")
+competitor_detections <- all_detections[all_detections$Species %in% competitor_species, ]
+competitor_counts <- as.data.frame(table(competitor_detections$Station))
+colnames(competitor_counts) <- c("Station", "Competitor_Detections")
+
+# Convert to dataframe and merge
+camera_traps_df <- as.data.frame(camera_traps)
+station_col <- names(camera_traps_df)[1]
+
+camera_traps_df <- merge(camera_traps_df, human_counts, 
+                         by.x = station_col, by.y = "Station", all.x = TRUE)
+camera_traps_df$Human_Activity[is.na(camera_traps_df$Human_Activity)] <- 0
+
+camera_traps_df <- merge(camera_traps_df, competitor_counts, 
+                         by.x = station_col, by.y = "Station", all.x = TRUE)
+camera_traps_df$Competitor_Detections[is.na(camera_traps_df$Competitor_Detections)] <- 0
+
+cat("Biotic covariates added: Human_Activity, Competitor_Detections\n\n")
+
+################################################################################
+# PART 6: SUMMARY STATISTICS
+################################################################################
+
+cat("=== SUMMARY STATISTICS ===\n\n")
+
+cat("TERRAIN (point values):\n")
+cat(sprintf("Elevation: %d ± %d m\n", 
+    round(mean(camera_traps_df$elevation, na.rm=TRUE)),
+    round(sd(camera_traps_df$elevation, na.rm=TRUE))))
+cat(sprintf("Slope: %.1f ± %.1f°\n",
+    mean(camera_traps_df$slope, na.rm=TRUE),
+    sd(camera_traps_df$slope, na.rm=TRUE)))
+cat(sprintf("TRI: %.2f ± %.2f\n",
+    mean(camera_traps_df$tri, na.rm=TRUE),
+    sd(camera_traps_df$tri, na.rm=TRUE)))
+
+cat("\nDISTANCES (meters):\n")
+cat(sprintf("Water points: %d ± %d m\n",
+    round(mean(camera_traps_df$dist_water_points, na.rm=TRUE)),
+    round(sd(camera_traps_df$dist_water_points, na.rm=TRUE))))
+cat(sprintf("Fish River: %d ± %d m\n",
+    round(mean(camera_traps_df$dist_fish_river, na.rm=TRUE)),
+    round(sd(camera_traps_df$dist_fish_river, na.rm=TRUE))))
+
+cat("\nBIOTIC:\n")
+cat(sprintf("Human detections: %d total, %d stations affected\n",
+    sum(camera_traps_df$Human_Activity),
+    sum(camera_traps_df$Human_Activity > 0)))
+cat(sprintf("Competitor detections: %d total, %d stations affected\n",
+    sum(camera_traps_df$Competitor_Detections),
+    sum(camera_traps_df$Competitor_Detections > 0)))
+
+################################################################################
+# PART 7: EXPORT
+################################################################################
+
+write.csv(camera_traps_df, "camera_traps_covariates_POINT.csv", row.names = FALSE)
+
+cat("\n")
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("              COVARIATE EXTRACTION COMPLETE                     \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("Output: camera_traps_covariates_POINT.csv\n")
+cat("Stations:", nrow(camera_traps_df), "\n")
+cat("Covariates:", ncol(camera_traps_df), "\n\n")
+
+cat("Covariates included:\n")
+cat("• Terrain: elevation, slope, tri, tpi, aspect\n")
+cat("• Distance: water_points, fish_river, konkiep_river, road, buildings\n")
+cat("• Biotic: Human_Activity, Competitor_Detections\n")
+cat("• Spatial: X, Y coordinates\n")
