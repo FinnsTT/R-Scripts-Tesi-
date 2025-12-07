@@ -1,4 +1,4 @@
-#### Identifies optimal analysis period and tests occasion length sensitivity
+# Identifies optimal analysis period and tests occasion length sensitivity
 
 library(dplyr)
 library(tidyr)
@@ -10,7 +10,17 @@ setwd("C://Users//Dell//Desktop//codici tesi//file GIS")
 
 # PART 1: LOAD DATA
 
-effort <- read.csv("sampling_effort.csv", stringsAsFactors = FALSE)
+effort <- read.csv("sampling_effort.csv", sep = ";", stringsAsFactors = FALSE)
+
+# Filtra solo righe valide
+effort <- effort[!is.na(effort$station) & effort$station != "", ]
+
+# Rimuovi doppie e righe di totali
+effort <- effort[!effort$station %in% c("FR12V", "FR23V", "FR31B", 
+                                        "TOT DIFF", "TOT POTENTIAL EFFORT", 
+                                        "TOT REALIZED EFFORT"), ]
+effort$station[effort$station == "FR31A"] <- "FR31"
+
 all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
 all_detections$Date <- as.Date(all_detections$Date)
 
@@ -21,30 +31,27 @@ cat("\nDate range:", as.character(min(all_detections$Date)), "to",
 
 # PART 2: ANALYZE CAMERA COVERAGE OVER TIME
 
-#Separatore punto e virgola
-effort <- read.csv("sampling_effort.csv", sep = ";", stringsAsFactors = FALSE)
-names(effort)
-
 # Find columns with days.diff.S1, days.diff.S2, etc.
-sampling_cols <- grep("^days\\.diff\\.S[0-9]+$", names(effort), value = TRUE)
+sampling_cols <- grep("^S[0-9]+_realized_effort$", names(effort), value = TRUE)
 
 # Extract sampling numbers (S1, S2, etc.)
-sampling_nums <- gsub("days\\.diff\\.", "", sampling_cols)
+sampling_nums <- gsub("_reali[sz]ed_effort", "", sampling_cols)
 
 coverage_summary <- data.frame(
   Sampling = sampling_nums,
   N_Active_Cameras = NA,
+  N_Cameras_With_Hyenas = NA,
   Start_Date = NA,
   End_Date = NA,
   Duration_Days = NA
 )
 
 for(i in 1:length(sampling_cols)) {
-  days_col <- sampling_cols[i]
+  effort_col <- sampling_cols[i]
   samp_num <- sampling_nums[i]
   
-  # Count cameras with >0 days active
-  n_active <- sum(effort[[days_col]] > 0, na.rm = TRUE)
+  # Count cameras with realized effort >0 days
+  n_active <- sum(effort[[effort_col]] > 0, na.rm = TRUE)
   coverage_summary$N_Active_Cameras[i] <- n_active
   
   # Get start/end dates
@@ -61,30 +68,47 @@ for(i in 1:length(sampling_cols)) {
       max(dates_end, na.rm = TRUE) - min(dates_start, na.rm = TRUE)
     )
   }
-}  
+}
+
+# Add count of cameras that detected hyenas per sampling
+for(i in 1:length(sampling_nums)) {
+  samp_num <- sampling_nums[i]
+  
+  # Filter hyena detections for this sampling
+  hyenas_this_sampling <- all_detections %>%
+    filter(Species == "Parahyaena brunnea",
+           Sampling == samp_num)
+  
+  # Count unique stations
+  n_with_hyenas <- length(unique(hyenas_this_sampling$Station))
+  coverage_summary$N_Cameras_With_Hyenas[i] <- n_with_hyenas
+}
 
 cat("=== CAMERA COVERAGE BY SAMPLING ===\n")
 print(coverage_summary)
 
-max_coverage <- max(coverage_summary$N_Active_Cameras, na.rm = TRUE)
-cat("\n*** Maximum coverage:", max_coverage, "cameras ***\n")
+ max_coverage <- max(coverage_summary$N_Active_Cameras, na.rm = TRUE)
+cat("\n*** Maximum camera coverage:", max_coverage, "cameras ***\n")
 
 max_periods <- coverage_summary[coverage_summary$N_Active_Cameras == max_coverage, ]
-cat("\nPeriods with maximum coverage:\n")
-print(max_periods[, c("Sampling", "N_Active_Cameras", "Start_Date", "End_Date")])
+cat("\nPeriods with maximum camera coverage:\n")
+print(max_periods[, c("Sampling", "N_Active_Cameras", "N_Cameras_With_Hyenas", "Start_Date", "End_Date")])
+
+cat("\nNOTE: N_Active_Cameras = cameras with effort >0 days\n")
+cat("      N_Cameras_With_Hyenas = subset that detected hyenas\n")
 
 # Plot coverage timeline
 coverage_summary$Sampling_Num <- as.numeric(gsub("S", "", coverage_summary$Sampling))
 
 p_coverage <- ggplot(coverage_summary, aes(x = Sampling_Num, y = N_Active_Cameras)) +
-  geom_line(size = 1, color = "steelblue") +
-  geom_point(size = 3, color = "steelblue") +
-  geom_hline(yintercept = 71, linetype = "dashed", color = "gold") +
+  geom_line(linewidth = 1, color = "steelblue") + 
+  geom_point(size = 3, color = "#31688E") +
+  geom_hline(yintercept = 71, linetype = "dashed", color = "#FDE725") +  
   labs(title = "Camera Trap Coverage Over Time",
        subtitle = paste("Target: 71 stations | Max achieved:", max_coverage),
        x = "Sampling Period", y = "Active Cameras") +
   theme_bw() +
-  scale_x_continuous(breaks = 1:21)
+  scale_x_continuous(breaks = 1:24) 
 
 ggsave("camera_coverage_timeline.png", p_coverage, width = 10, height = 6)
 
@@ -214,7 +238,7 @@ monthly_all <- all_hyenas %>%
 cat("Total months in full dataset:", nrow(monthly_all), "\n")
 
 p_temporal_full <- ggplot(monthly_all, aes(x = YearMonth, y = N_Detections)) +
-  geom_line(linewidth = 1, color = "#35b779") +  # Verde viridis
+  geom_line(linewidth = 1, color = "#35b779") + 
   geom_point(size = 3, color = "#35b779") +
   labs(title = "Hyena Detections Over Time - Full Dataset",
        subtitle = "All detections from start to end of project",
@@ -230,9 +254,14 @@ cat("Plot saved: temporal_pattern_full_dataset.png\n")
 
 write.csv(hyena_detections, "hyena_detections_max_coverage.csv", row.names = FALSE)
 
-stations_active <- effort$station[effort[[sampling_cols[1]]] > 0]
-write.csv(data.frame(Station = stations_active), 
-          "stations_max_coverage.csv", row.names = FALSE)
+# Export station list with effort info for max coverage period
+stations_effort <- effort %>%
+  select(station, all_of(paste0("days.diff.", samplings_to_use))) %>%
+  filter(rowSums(select(., starts_with("days.diff")) > 0, na.rm = TRUE) > 0)
+
+write.csv(stations_effort, "stations_max_coverage_effort.csv", row.names = FALSE)
+
+cat("Exported", nrow(stations_effort), "stations with effort in max coverage period\n")
 
 # SUMMARY
 
@@ -259,3 +288,4 @@ cat("• sensitivity_plots.png\n")
 cat("• temporal_pattern_monthly.png\n")
 cat("• hyena_detections_max_coverage.csv\n")
 cat("• stations_max_coverage.csv\n")
+
