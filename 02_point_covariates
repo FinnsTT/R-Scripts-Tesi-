@@ -1,18 +1,15 @@
-################################################################################
-# 02_POINT_COVARIATES.R
 # Extract point-based environmental and biotic covariates for camera trap sites
-################################################################################
 
 library(terra)
 library(sf)
 library(dplyr)
 library(spatialEco)
+library(ggplot2)
+library(gridExtra)
 
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
 
-################################################################################
 # PART 1: LOAD SPATIAL DATA
-################################################################################
 
 dem <- terra::rast('dem.tif')
 camera_traps <- terra::vect('camera_traps.shp')
@@ -33,22 +30,27 @@ water_points_utm <- terra::project(water_points, crs(dem))
 tourist_road_utm <- terra::project(tourist_road, crs(dem))
 staff_buildings_utm <- terra::project(staff_buildings, crs(dem))
 
-################################################################################
 # PART 2: VISUAL CHECK
-################################################################################
 
-plot(dem, ext=ext(camera_traps)*1.2, main="Study Area Overview",
-     col = hcl.colors(100, "viridis"))
-plot(fish_river_utm, add=TRUE, col='#440154', lwd=3)  # Viridis purple
-plot(konkiep_river_utm, add=TRUE, col='#440154', lwd=3, lty=2)
-plot(water_points_utm, add=TRUE, col='#31688E', pch=19, cex=1)  # Viridis blue
-plot(tourist_road_utm, add=TRUE, col='#FDE725', lwd=2)  # Viridis gold
-plot(staff_buildings_utm, add=TRUE, col='#FDE725', pch=15, cex=1.5)
-plot(camera_traps, add=TRUE, col='#35B779', pch=17, cex=1.2)  # Viridis green
+canyon_colors <- colorRampPalette(c(
+  "#D55E00",  # (basso)
+  "#E69F00",  # 
+  "#F0E442",  # 
+  "#FFFFCC"   # (alto)
+))(100)
 
-################################################################################
+plot(dem, ext=ext(camera_traps)*1.2, 
+     main="Study Area Overview",
+     col = canyon_colors)
+
+plot(fish_river_utm, add=TRUE, col='#0072B2', lwd=3)  
+plot(konkiep_river_utm, add=TRUE, col='#0072B2', lwd=3)   #lty=2
+plot(water_points_utm, add=TRUE, col='#56B4E9', pch=19, cex=1) 
+plot(tourist_road_utm, add=TRUE, col='#000000', lwd=2) 
+plot(staff_buildings_utm, add=TRUE, col='#000000', pch=15, cex=1.5)
+plot(camera_traps, add=TRUE, col='#009E73', pch=17, cex=1.2) 
+
 # PART 3: EXTRACT POINT-BASED TERRAIN METRICS
-################################################################################
 
 cat("=== EXTRACTING TERRAIN METRICS ===\n")
 
@@ -80,9 +82,7 @@ camera_traps$tpi <- terra::extract(tpi, camera_traps)[,2]
 
 cat("Terrain metrics extracted: elevation, slope, TRI, aspect, TPI\n\n")
 
-################################################################################
 # PART 4: CALCULATE DISTANCES
-################################################################################
 
 cat("=== CALCULATING DISTANCES ===\n")
 
@@ -103,14 +103,12 @@ dist_tourist_road <- terra::distance(dem, tourist_road_utm)
 camera_traps$dist_tourist_road <- terra::extract(dist_tourist_road, camera_traps)[,2]
 
 # Distance to staff buildings
-dist_staff_buildings <- terra::distance(dem, staff_buildings_utm)
+dist_staff_buildings <- terra:: distance(dem, staff_buildings_utm)
 camera_traps$dist_staff_buildings <- terra::extract(dist_staff_buildings, camera_traps)[,2]
 
 cat("Distance metrics calculated\n\n")
 
-################################################################################
 # PART 5: BIOTIC COVARIATES
-################################################################################
 
 cat("=== CALCULATING BIOTIC COVARIATES ===\n")
 
@@ -142,42 +140,38 @@ camera_traps_df$Competitor_Detections[is.na(camera_traps_df$Competitor_Detection
 
 cat("Biotic covariates added: Human_Activity, Competitor_Detections\n\n")
 
-################################################################################
 # PART 6: SUMMARY STATISTICS
-################################################################################
 
 cat("=== SUMMARY STATISTICS ===\n\n")
 
 cat("TERRAIN (point values):\n")
 cat(sprintf("Elevation: %d ± %d m\n", 
-    round(mean(camera_traps_df$elevation, na.rm=TRUE)),
-    round(sd(camera_traps_df$elevation, na.rm=TRUE))))
+            round(mean(camera_traps_df$elevation, na.rm=TRUE)),
+            round(sd(camera_traps_df$elevation, na.rm=TRUE))))
 cat(sprintf("Slope: %.1f ± %.1f°\n",
-    mean(camera_traps_df$slope, na.rm=TRUE),
-    sd(camera_traps_df$slope, na.rm=TRUE)))
+            mean(camera_traps_df$slope, na.rm=TRUE),
+            sd(camera_traps_df$slope, na.rm=TRUE)))
 cat(sprintf("TRI: %.2f ± %.2f\n",
-    mean(camera_traps_df$tri, na.rm=TRUE),
-    sd(camera_traps_df$tri, na.rm=TRUE)))
+            mean(camera_traps_df$tri, na.rm=TRUE),
+            sd(camera_traps_df$tri, na.rm=TRUE)))
 
 cat("\nDISTANCES (meters):\n")
 cat(sprintf("Water points: %d ± %d m\n",
-    round(mean(camera_traps_df$dist_water_points, na.rm=TRUE)),
-    round(sd(camera_traps_df$dist_water_points, na.rm=TRUE))))
+            round(mean(camera_traps_df$dist_water_points, na.rm=TRUE)),
+            round(sd(camera_traps_df$dist_water_points, na.rm=TRUE))))
 cat(sprintf("Fish River: %d ± %d m\n",
-    round(mean(camera_traps_df$dist_fish_river, na.rm=TRUE)),
-    round(sd(camera_traps_df$dist_fish_river, na.rm=TRUE))))
+            round(mean(camera_traps_df$dist_fish_river, na.rm=TRUE)),
+            round(sd(camera_traps_df$dist_fish_river, na.rm=TRUE))))
 
 cat("\nBIOTIC:\n")
 cat(sprintf("Human detections: %d total, %d stations affected\n",
-    sum(camera_traps_df$Human_Activity),
-    sum(camera_traps_df$Human_Activity > 0)))
+            sum(camera_traps_df$Human_Activity),
+            sum(camera_traps_df$Human_Activity > 0)))
 cat(sprintf("Competitor detections: %d total, %d stations affected\n",
-    sum(camera_traps_df$Competitor_Detections),
-    sum(camera_traps_df$Competitor_Detections > 0)))
+            sum(camera_traps_df$Competitor_Detections),
+            sum(camera_traps_df$Competitor_Detections > 0)))
 
-################################################################################
 # PART 7: EXPORT
-################################################################################
 
 write.csv(camera_traps_df, "camera_traps_covariates_POINT.csv", row.names = FALSE)
 
@@ -195,3 +189,77 @@ cat("• Terrain: elevation, slope, tri, tpi, aspect\n")
 cat("• Distance: water_points, fish_river, konkiep_river, road, buildings\n")
 cat("• Biotic: Human_Activity, Competitor_Detections\n")
 cat("• Spatial: X, Y coordinates\n")
+
+# EXPLORATORY PLOTS
+
+cat("\n=== CREATING EXPLORATORY PLOTS ===\n")
+
+# 1. Distribution of terrain variables
+p1 <- ggplot(camera_traps_df, aes(x=elevation)) +
+  geom_histogram(fill='#440154', color='black', bins=20) +
+  labs(title="Elevation Distribution", x="Elevation (m)", y="Count") +
+  theme_bw()
+
+p2 <- ggplot(camera_traps_df, aes(x=slope)) +
+  geom_histogram(fill='#31688E', color='black', bins=20) +
+  labs(title="Slope Distribution", x="Slope (degrees)", y="Count") +
+  theme_bw()
+
+p3 <- ggplot(camera_traps_df, aes(x=tri)) +
+  geom_histogram(fill='#35B779', color='black', bins=20) +
+  labs(title="Terrain Ruggedness (TRI)", x="TRI", y="Count") +
+  theme_bw()
+
+p4 <- ggplot(camera_traps_df, aes(x=tpi)) +
+  geom_histogram(fill='#FDE725', color='black', bins=20) +
+  labs(title="Topographic Position (TPI)", x="TPI", y="Count") +
+  theme_bw()
+
+png("terrain_distributions.png", width=1200, height=800, res=120)
+grid.arrange(p1, p2, p3, p4, ncol=2)
+dev.off()
+
+# 2. Distance distributions
+d1 <- ggplot(camera_traps_df, aes(x=dist_water_points/1000)) +
+  geom_histogram(fill='#440154', color='black', bins=20) +
+  labs(title="Distance to Water Points", x="Distance (km)", y="Count") +
+  theme_bw()
+
+d2 <- ggplot(camera_traps_df, aes(x=dist_fish_river/1000)) +
+  geom_histogram(fill='#31688E', color='black', bins=20) +
+  labs(title="Distance to Fish River", x="Distance (km)", y="Count") +
+  theme_bw()
+
+d3 <- ggplot(camera_traps_df, aes(x=dist_tourist_road/1000)) +
+  geom_histogram(fill='#35B779', color='black', bins=20) +
+  labs(title="Distance to Road", x="Distance (km)", y="Count") +
+  theme_bw()
+
+d4 <- ggplot(camera_traps_df, aes(x=dist_staff_buildings/1000)) +
+  geom_histogram(fill='#FDE725', color='black', bins=20) +
+  labs(title="Distance to Buildings", x="Distance (km)", y="Count") +
+  theme_bw()
+
+png("distance_distributions.png", width=1200, height=800, res=120)
+grid.arrange(d1, d2, d3, d4, ncol=2)
+dev.off()
+
+# 3. Biotic covariates
+b1 <- ggplot(camera_traps_df, aes(x=Human_Activity)) +
+  geom_histogram(fill='#31688E', color='black', bins=30) +
+  labs(title="Human Activity per Station", x="N detections", y="Count") +
+  theme_bw()
+
+b2 <- ggplot(camera_traps_df, aes(x=Competitor_Detections)) +
+  geom_histogram(fill='#35B779', color='black', bins=15) +
+  labs(title="Competitor Detections per Station", x="N detections", y="Count") +
+  theme_bw()
+
+png("biotic_distributions.png", width=1200, height=400, res=120)
+grid.arrange(b1, b2, ncol=2)
+dev.off()
+
+cat("Plots saved:\n")
+cat("• terrain_distributions.png\n")
+cat("• distance_distributions.png\n")
+cat("• biotic_distributions.png\n\n")
