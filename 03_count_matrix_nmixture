@@ -1,0 +1,220 @@
+# Create count matrices for different occasion lengths 
+# (1, 2, 3, 5, 7 days) For N-Mixture sensitivity analysis
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: LOAD DATA
+
+# Load hyena detections with counts
+hyena_data <- read.csv("DATA-15min_Sampling1-21_counts_Parahyena_brunnea.csv", 
+                       stringsAsFactors = FALSE)
+hyena_data$Date <- as.Date(hyena_data$Date)
+
+# Load effort data
+effort <- read.csv("sampling_effort.csv", sep = ";", stringsAsFactors = FALSE)
+effort <- effort[!is.na(effort$station) & effort$station != "", ]
+effort <- effort[!effort$station %in% c("FR12V", "FR23V", "FR31B", 
+                                        "TOT DIFF", "TOT POTENTIAL EFFORT", 
+                                        "TOT REALIZED EFFORT"), ]
+effort$station[effort$station == "FR31A"] <- "FR31"
+
+cat("\n=== DATA LOADED ===\n")
+cat("Hyena detections:", nrow(hyena_data), "\n")
+cat("Stations with effort:", nrow(effort), "\n\n")
+
+# PART 2: FILTER FOR S11-S21 PERIOD
+
+# Samplings to include
+samplings_use <- paste0("S", 10:21)
+
+# Filter detections
+hyena_filtered <- hyena_data %>%
+  filter(Sampling %in% samplings_use)
+
+cat("=== FILTERED FOR S10-S21 ===\n")
+cat("Detections:", nrow(hyena_filtered), "\n")
+cat("Date range:", as.character(min(hyena_filtered$Date)), "to", 
+    as.character(max(hyena_filtered$Date)), "\n")
+cat("Stations with detections:", length(unique(hyena_filtered$Station)), "\n\n")
+
+# Get period dates
+start_date <- min(hyena_filtered$Date)
+end_date <- max(hyena_filtered$Date)
+total_days <- as.numeric(end_date - start_date) + 1
+
+cat("Analysis period:", total_days, "days\n\n")
+
+# PART 3: CREATE COUNT MATRICES FOR DIFFERENT OCCASION LENGTHS
+
+cat("=== CREATING COUNT MATRICES ===\n")
+
+# Test different occasion lengths
+occasion_lengths <- c(1, 2, 3, 5, 7)
+
+# Store results
+count_matrices <- list()
+occasion_info <- list()
+
+for(occ_length in occasion_lengths) {
+  
+cat("Processing", occ_length, "day occasions...\n")
+  
+# Calculate occasion ID for each detection
+hyena_filtered$Occasion <- floor(
+  as.numeric(difftime(hyena_filtered$Date, start_date, units = "days")) / occ_length
+) + 1
+  
+# Aggregate counts per station × occasion
+# Sum counts if multiple events in same occasion
+count_data <- hyena_filtered %>%
+  group_by(Station, Occasion) %>%
+  summarise(Total_Count = sum(Count, na.rm = TRUE), .groups = 'drop')
+  
+# Create wide format (stations × occasions)
+count_wide <- count_data %>%
+  pivot_wider(names_from = Occasion, 
+              values_from = Total_Count, 
+              values_fill = 0)
+
+# Ensure all 71 stations are present
+all_stations <- data.frame(Station = effort$station)
+count_wide <- merge(all_stations, count_wide, by = "Station", all.x = TRUE)
+
+# Replace NA with 0 for stations with no detections
+count_wide[is.na(count_wide)] <- 0
+
+# Sort by station
+count_wide <- count_wide[order(count_wide$Station), ]
+
+# Extract matrix (without station column)
+y_matrix <- as.matrix(count_wide[, -1])
+rownames(y_matrix) <- count_wide$Station
+
+# Store
+count_matrices[[paste0("occ_", occ_length)]] <- y_matrix
+
+# Calculate statistics
+n_occasions <- ncol(y_matrix)
+total_counts <- sum(y_matrix, na.rm = TRUE)
+mean_count <- mean(y_matrix, na.rm = TRUE)
+max_count <- max(y_matrix, na.rm = TRUE)
+prop_zeros <- sum(y_matrix == 0, na.rm = TRUE) / length(y_matrix)
+n_stations_detected <- sum(rowSums(y_matrix) > 0)
+
+occasion_info[[paste0("occ_", occ_length)]] <- data.frame(
+  Occasion_Length = occ_length,
+  N_Occasions = n_occasions,
+  Total_Counts = total_counts,
+  Mean_Count = mean_count,
+  Max_Count = max_count,
+  Prop_Zeros = prop_zeros,
+  N_Stations_Detected = n_stations_detected
+)
+
+# Export matrix
+write.csv(count_wide, 
+          paste0("count_matrix_", occ_length, "day.csv"), 
+          row.names = FALSE)
+}
+
+cat("\n")
+ 
+#PART 4: SUMMARY TABLE
+
+summary_table <- do.call(rbind, occasion_info)
+rownames(summary_table) <- NULL
+
+cat("=== SUMMARY STATISTICS ===\n")
+print(summary_table)
+
+write.csv(summary_table, "occasion_length_summary.csv", row.names = FALSE)
+
+# PART 5: VISUALIZATION
+
+library(ggplot2)
+library(gridExtra)
+
+cat("\n=== CREATING PLOTS ===\n")
+
+# Plot 1: Mean count vs occasion length
+p1 <- ggplot(summary_table, aes(x = Occasion_Length, y = Mean_Count)) +
+  geom_line(linewidth = 1.5, color = "#440154") +
+  geom_point(size = 4, color = "#440154") +
+  labs(title = "Mean Count vs Occasion Length",
+       subtitle = "Watch for dramatic increases (double-counting)",
+       x = "Occasion Length (days)",
+       y = "Mean Count per Occasion") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Plot 2: Max count vs occasion length
+p2 <- ggplot(summary_table, aes(x = Occasion_Length, y = Max_Count)) +
+  geom_line(linewidth = 1.5, color = "#31688E") +  # Viridis blue
+  geom_point(size = 4, color = "#31688E") +
+  labs(title = "Maximum Count vs Occasion Length",
+       subtitle = "Watch for unrealistically high values",
+       x = "Occasion Length (days)",
+       y = "Max Count") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Plot 3: Proportion zeros
+p3 <- ggplot(summary_table, aes(x = Occasion_Length, y = Prop_Zeros)) +
+  geom_line(linewidth = 1.5, color = "#FDE725") +  # Viridis gold
+  geom_point(size = 4, color = "#FDE725") +
+  labs(title = "Proportion of Zeros vs Occasion Length",
+       x = "Occasion Length (days)",
+       y = "Proportion Zeros") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+# Plot 4: Number of occasions
+p4 <- ggplot(summary_table, aes(x = Occasion_Length, y = N_Occasions)) +
+  geom_line(linewidth = 1.5, color = "#35B779") +  # Viridis green
+  geom_point(size = 4, color = "#35B779") +
+  labs(title = "Number of Occasions",
+       x = "Occasion Length (days)",
+       y = "N Occasions") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+png("occasion_length_comparison.png", width = 1200, height = 900, res = 120)
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+dev.off()
+
+# PART 6: DETAILED COMPARISON
+
+cat("\n=== OCCASION LENGTH COMPARISON ===\n\n")
+
+for(occ in c(1, 2, 3, 5, 7)) {
+  info <- summary_table[summary_table$Occasion_Length == occ, ]
+  
+  cat(sprintf("OCCASION LENGTH: %d days\n", occ))
+  cat(sprintf("  Occasions: %d\n", info$N_Occasions))
+  cat(sprintf("  Mean count: %.3f\n", info$Mean_Count))
+  cat(sprintf("  Max count: %d\n", info$Max_Count))
+  cat(sprintf("  Prop zeros: %.2f%%\n", info$Prop_Zeros * 100))
+  cat(sprintf("  Stations detected: %d/%d\n\n", info$N_Stations_Detected, 71))
+}
+
+# SUMMARY
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("                  COUNT MATRIX CREATION COMPLETE                \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("Period analyzed: S10-S21\n")
+cat("Date range:", as.character(start_date), "to", as.character(end_date), "\n")
+cat("Total days:", total_days, "\n")
+cat("Stations: 71\n\n")
+
+cat("Files created:\n")
+for(occ in occasion_lengths) {
+  cat(sprintf("• count_matrix_%dday.csv\n", occ))
+}
+cat("• occasion_length_summary.csv\n")
+cat("• occasion_length_comparison.png\n\n")
