@@ -1,0 +1,267 @@
+# Test N-Mixture models across different occasion lengths
+# Identify which gives stable abundance estimates
+
+library(unmarked)
+library(ggplot2)
+library(dplyr)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: SETUP
+
+cat("\n=== N-MIXTURE SENSITIVITY ANALYSIS ===\n\n")
+
+# Occasion lengths to test
+occasion_lengths <- c(1, 2, 3, 5, 7)
+
+# Storage for results
+results <- data.frame(
+  Occasion_Length = integer(),
+  Lambda = numeric(),
+  Lambda_SE = numeric(),
+  Lambda_Lower = numeric(),
+  Lambda_Upper = numeric(),
+  p = numeric(),
+  p_SE = numeric(),
+  p_Lower = numeric(),
+  p_Upper = numeric(),
+  AIC = numeric(),
+  Converged = logical()
+)
+
+models <- list()
+
+# PART 2: FIT N-MIXTURE MODELS FOR EACH OCCASION LENGTH
+
+cat("Fitting N-Mixture models...\n\n")
+
+for(occ_length in occasion_lengths) {
+  
+  cat("═══════════════════════════════════════════════════════════════\n")
+  cat(sprintf("OCCASION LENGTH: %d days\n", occ_length))
+  cat("═══════════════════════════════════════════════════════════════\n")
+  
+  # Load count matrix
+  count_file <- paste0("count_matrix_", occ_length, "day.csv")
+  count_data <- read.csv(count_file, stringsAsFactors = FALSE)
+  
+  # Extract station names and matrix
+  stations <- count_data$Station
+  y_matrix <- as.matrix(count_data[, -1])  # Remove station column
+  
+  cat("Stations:", nrow(y_matrix), "\n")
+  cat("Occasions:", ncol(y_matrix), "\n")
+  cat("Total detections:", sum(y_matrix), "\n")
+  
+  # Create unmarkedFrame
+  umf <- unmarkedFramePCount(y = y_matrix)
+  
+  cat("unmarkedFrame created\n")
+  
+  # Fit basic model: constant lambda and p
+  # pcount(formula, data, K)
+  # formula: ~detection ~abundance
+  # K: upper bound for abundance (set conservatively)
+  
+  tryCatch({
+    
+    model <- pcount(~1 ~1, data = umf, K = 50)
+    
+    cat("Model fitted successfully\n")
+    
+    # Extract estimates
+    # Lambda (abundance) - on log scale, need to back-transform
+    lambda_est <- coef(model, type = "state")
+    lambda_se <- SE(model, type = "state")
+    
+    # Back-transform to real scale
+    lambda_real <- exp(lambda_est)
+    
+    # Confidence intervals (delta method approximation)
+    lambda_lower <- exp(lambda_est - 1.96 * lambda_se)
+    lambda_upper <- exp(lambda_est + 1.96 * lambda_se)
+    
+    # Detection probability - on logit scale
+    p_est <- coef(model, type = "det")
+    p_se <- SE(model, type = "det")
+    
+    # Back-transform to probability scale
+    p_real <- plogis(p_est)
+    p_lower <- plogis(p_est - 1.96 * p_se)
+    p_upper <- plogis(p_est + 1.96 * p_se)
+    
+    # AIC
+    aic <- model@AIC
+    
+    # Store results
+    results <- rbind(results, data.frame(
+      Occasion_Length = occ_length,
+      Lambda = lambda_real,
+      Lambda_SE = lambda_se,
+      Lambda_Lower = lambda_lower,
+      Lambda_Upper = lambda_upper,
+      p = p_real,
+      p_SE = p_se,
+      p_Lower = p_lower,
+      p_Upper = p_upper,
+      AIC = aic,
+      Converged = TRUE
+    ))
+    
+    models[[paste0("occ_", occ_length)]] <- model
+    
+    cat(sprintf("\nRESULTS:\n"))
+    cat(sprintf("  Lambda (abundance): %.3f (95%% CI: %.3f - %.3f)\n", 
+                lambda_real, lambda_lower, lambda_upper))
+    cat(sprintf("  p (detection): %.3f (95%% CI: %.3f - %.3f)\n", 
+                p_real, p_lower, p_upper))
+    cat(sprintf("  AIC: %.2f\n\n", aic))
+    
+  }, error = function(e) {
+    cat("ERROR: Model failed to converge\n")
+    cat(paste("Message:", e$message, "\n\n"))
+    
+    results <<- rbind(results, data.frame(
+      Occasion_Length = occ_length,
+      Lambda = NA,
+      Lambda_SE = NA,
+      Lambda_Lower = NA,
+      Lambda_Upper = NA,
+      p = NA,
+      p_SE = NA,
+      p_Lower = NA,
+      p_Upper = NA,
+      AIC = NA,
+      Converged = FALSE
+    ))
+  })
+}
+
+# PART 3: SUMMARY TABLE
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("                     SUMMARY TABLE                              \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+print(results)
+
+write.csv(results, "nmixture_sensitivity_results.csv", row.names = FALSE)
+
+# PART 4: VISUALIZATION
+
+cat("\n=== CREATING PLOTS ===\n")
+
+# Filter only converged models
+results_conv <- results[results$Converged, ]
+
+if(nrow(results_conv) > 0) {
+  # Plot 1: Lambda vs Occasion Length
+  p1 <- ggplot(results_conv, aes(x = Occasion_Length, y = Lambda)) +
+    geom_line(linewidth = 1.5, color = "#440154") +  
+    geom_point(size = 4, color = "#440154") +
+    geom_errorbar(aes(ymin = Lambda_Lower, ymax = Lambda_Upper), 
+                  width = 0.2, linewidth = 1, color = "#440154") +
+    labs(title = "Abundance Estimate",
+         subtitle = "Look for stable estimates across occasion lengths",
+         x = "Occasion Length (days)",
+         y = expression(paste("Abundance (", lambda, ")"))) +
+    theme_bw() +
+    theme(plot.title = element_text(size = 14, face = "bold"))
+  
+  # Plot 2: Detection probability vs Occasion Length
+  p2 <- ggplot(results_conv, aes(x = Occasion_Length, y = p)) +
+    geom_line(linewidth = 1.5, color = "#31688E") +  
+    geom_point(size = 4, color = "#31688E") +
+    geom_errorbar(aes(ymin = p_Lower, ymax = p_Upper), 
+                  width = 0.2, linewidth = 1, color = "#31688E") +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "blue", linewidth = 0.8) +
+    labs(title = "Detection Probability",
+         subtitle = "Red line = p=1 (warning if approached)",
+         x = "Occasion Length (days)",
+         y = "Detection Probability (p)") +
+    ylim(0, 1) +
+    theme_bw() +
+    theme(plot.title = element_text(size = 14, face = "bold"))
+  
+  # Plot 3: AIC comparison
+  p3 <- ggplot(results_conv, aes(x = Occasion_Length, y = AIC)) +
+    geom_line(linewidth = 1.5, color = "#35B779") +  
+    geom_point(size = 4, color = "#35B779") +
+    labs(title = "AIC vs Occasion Length",
+         subtitle = "Lower AIC = better model fit",
+         x = "Occasion Length (days)",
+         y = "AIC") +
+    theme_bw() +
+    theme(plot.title = element_text(size = 14, face = "bold"))
+  
+  library(gridExtra)
+  
+  png("nmixture_sensitivity_plots.png", width = 1200, height = 400, res = 120)
+  grid.arrange(p1, p2, p3, ncol = 3)
+  dev.off()
+  
+  cat("Plots saved: nmixture_sensitivity_plots.png\n")
+}
+
+# PART 5: INTERPRETATION GUIDE
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("                   INTERPRETATION GUIDE                         \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("WHAT TO LOOK FOR:\n\n")
+
+cat("1. STABLE LAMBDA:\n")
+cat("   - Lambda should NOT increase dramatically with longer occasions\n")
+cat("   - If it does → double-counting problem\n")
+cat("   - Look for plateau or slight increase\n\n")
+
+cat("2. DETECTION PROBABILITY:\n")
+cat("   - Should be < 1 (ideally 0.1 - 0.5)\n")
+cat("   - If p → 1 → model assumptions violated\n")
+cat("   - Higher p with longer occasions is expected\n\n")
+
+cat("3. AIC:\n")
+cat("   - Lower is better\n")
+cat("   - But balance with biological realism\n\n")
+
+cat("4. CONFIDENCE INTERVALS:\n")
+cat("   - Narrower = more precise\n")
+cat("   - Watch for overlapping CIs across occasions\n\n")
+
+if(nrow(results_conv) > 0) {
+  
+  # Find best occasion length by AIC
+  best_aic <- results_conv[which.min(results_conv$AIC), ]
+  
+  cat("═══════════════════════════════════════════════════════════════\n")
+  cat("                      RECOMMENDATION                           \n")
+  cat("═══════════════════════════════════════════════════════════════\n\n")
+  
+  cat(sprintf("Best AIC: %d days (AIC = %.2f)\n", 
+              best_aic$Occasion_Length, best_aic$AIC))
+  cat(sprintf("  Lambda: %.3f (%.3f - %.3f)\n",
+              best_aic$Lambda, best_aic$Lambda_Lower, best_aic$Lambda_Upper))
+  cat(sprintf("  p: %.3f (%.3f - %.3f)\n\n",
+              best_aic$p, best_aic$p_Lower, best_aic$p_Upper))
+  
+  cat("CONSIDER ALSO:\n")
+  cat("- Professor suggested 5-7 days might be best\n")
+  cat("- Check if lambda estimates are stable across 5-7 days\n")
+  cat("- Prefer occasion length with reasonable p (0.1-0.5)\n\n")
+}
+
+# SUMMARY
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("              SENSITIVITY ANALYSIS COMPLETE                     \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("Files created:\n")
+cat("• nmixture_sensitivity_results.csv\n")
+cat("• nmixture_sensitivity_plots.png\n\n")
+
+cat("NEXT STEP:\n")
+cat("1. Review plots and choose best occasion length\n")
+cat("2. Use that occasion length in final N-Mixture models with covariates\n")
+cat("3. Proceed to Script #6 for full covariate analysis\n")
