@@ -1,1 +1,5 @@
-#05_observation_covariates_calculator
+# Calculate observation-level covariates for 3-day occasions
+# - Effort (camera-days active per occasion)
+# - Moon phase (illumination %)
+# - Human activity (per occasion)
+# - Competitor activity (per occasion)
