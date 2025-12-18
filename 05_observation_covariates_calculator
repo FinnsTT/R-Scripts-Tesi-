@@ -3,3 +3,313 @@
 # - Moon phase (illumination %)
 # - Human activity (per occasion)
 # - Competitor activity (per occasion)
+
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(suncalc)  # For moon phase calculations with geographic coordinates
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: LOAD DATA
+
+cat("\n=== LOADING DATA ===\n")
+
+# Load hyena detections (with counts)
+hyena_data <- read.csv("DATA-15min_Sampling1-21_counts_Parahyena_brunnea.csv", 
+                       stringsAsFactors = FALSE)
+hyena_data$Date <- as.Date(hyena_data$Date)
+
+# Load ALL detections (for human/competitor activity)
+all_detections <- read.csv("DATA-15min_Sampling1-21.csv", stringsAsFactors = FALSE)
+all_detections$Date <- as.Date(all_detections$Date)
+
+# Load effort data
+effort <- read.csv("sampling_effort.csv", sep = ";", stringsAsFactors = FALSE)
+effort <- effort[!is.na(effort$station) & effort$station != "", ]
+effort <- effort[!effort$station %in% c("FR12V", "FR23V", "FR31B", 
+                                        "TOT DIFF", "TOT POTENTIAL EFFORT", 
+                                        "TOT REALIZED EFFORT"), ]
+effort$station[effort$station == "FR31A"] <- "FR31"
+
+cat("Data loaded\n\n")
+
+# PART 2: DEFINE PERIOD AND OCCASIONS
+
+cat("=== DEFINING 3-DAY OCCASIONS ===\n")
+
+# Period: S10-S21
+samplings_use <- paste0("S", 10:21)
+
+# Filter hyena detections
+hyena_filtered <- hyena_data %>%
+  filter(Sampling %in% samplings_use)
+
+# Get period dates
+start_date <- min(hyena_filtered$Date)
+end_date <- max(hyena_filtered$Date)
+total_days <- as.numeric(end_date - start_date) + 1
+
+cat("Analysis period:", as.character(start_date), "to", as.character(end_date), "\n")
+cat("Total days:", total_days, "\n")
+
+# Calculate number of 3-day occasions
+n_occasions <- ceiling(total_days / 3)
+cat("Number of 3-day occasions:", n_occasions, "\n\n")
+
+# Create occasion date ranges
+occasion_info <- data.frame(
+  Occasion = 1:n_occasions,
+  Start_Date = start_date + (0:(n_occasions-1)) * 3,
+  End_Date = pmin(start_date + (1:n_occasions) * 3 - 1, end_date)
+)
+
+# PART 3: CALCULATE EFFORT PER OCCASION × STATION
+
+cat("=== CALCULATING EFFORT ===\n")
+
+# Get effort columns for S10-S21
+effort_cols <- grep("^S(10|11|12|13|14|15|16|17|18|19|20|21)_realized_effort$", 
+                    names(effort), value = TRUE)
+
+# Get date columns
+date_cols_start <- gsub("_realized_effort", "_start", effort_cols)
+date_cols_end <- gsub("_realized_effort", "_end", effort_cols)
+
+# Initialize effort matrix (stations × occasions)
+effort_matrix <- matrix(0, nrow = 71, ncol = n_occasions)
+rownames(effort_matrix) <- effort$station
+colnames(effort_matrix) <- paste0("Occ", 1:n_occasions)
+
+# For each station and sampling period
+for(i in 1:nrow(effort)) {
+  station <- effort$station[i]
+  
+  for(s in 1:length(effort_cols)) {
+    
+    # Get dates for this sampling
+    start_col <- date_cols_start[s]
+    end_col <- date_cols_end[s]
+    
+    if(start_col %in% names(effort) & end_col %in% names(effort)) {
+      
+      samp_start <- as.Date(effort[[start_col]][i])
+      samp_end <- as.Date(effort[[end_col]][i])
+      
+      # Skip if dates are NA
+      if(is.na(samp_start) | is.na(samp_end)) next
+      
+      # For each occasion, calculate overlap
+      for(occ in 1:n_occasions) {
+        occ_start <- occasion_info$Start_Date[occ]
+        occ_end <- occasion_info$End_Date[occ]
+        
+        # Calculate overlap between sampling period and occasion
+        overlap_start <- max(samp_start, occ_start)
+        overlap_end <- min(samp_end, occ_end)
+        
+        if(overlap_end >= overlap_start) {
+          overlap_days <- as.numeric(overlap_end - overlap_start) + 1
+          effort_matrix[station, occ] <- effort_matrix[station, occ] + overlap_days
+        }
+      }
+    }
+  }
+}
+
+cat("Effort matrix calculated\n")
+cat("Range:", min(effort_matrix), "-", max(effort_matrix), "days\n\n")
+
+# PART 4: CALCULATE MOON PHASE PER OCCASION
+
+cat("=== CALCULATING MOON PHASE ===\n")
+
+# Fish River Canyon coordinates (approximate center)
+# Latitude: -27.5°S, Longitude: 17.8°E
+fish_river_lat <- -27.5
+fish_river_lon <- 17.8
+
+cat("Location: Fish River Canyon, Namibia\n")
+cat(sprintf("Coordinates: %.2f°S, %.2f°E\n", abs(fish_river_lat), fish_river_lon))
+
+moon_illum <- numeric(n_occasions)
+
+for(occ in 1:n_occasions) {
+  occ_start <- occasion_info$Start_Date[occ]
+  occ_end <- occasion_info$End_Date[occ]
+  
+  # Get all dates in this occasion
+  dates_in_occ <- seq(occ_start, occ_end, by = "day")
+  
+  # Calculate moon illumination for each date at Fish River Canyon
+  moon_data <- getMoonIllumination(
+    date = dates_in_occ,
+    keep = c("fraction")  # fraction = illuminated fraction of moon (0-1)
+  )
+  
+  # Mean illumination for the occasion
+  moon_illum[occ] <- mean(moon_data$fraction)
+}
+
+occasion_info$Moon_Illumination <- moon_illum
+
+cat("Moon phase calculated for Namibia location\n")
+cat("Range:", round(min(moon_illum), 3), "-", round(max(moon_illum), 3), "\n\n")
+
+# PART 5: CALCULATE HUMAN ACTIVITY PER OCCASION × STATION
+
+cat("=== CALCULATING HUMAN ACTIVITY ===\n")
+
+# Filter human detections
+human_species <- c("Homo sapiens", "Vehicles")
+human_detections <- all_detections %>%
+  filter(Species %in% human_species,
+         Date >= start_date,
+         Date <= end_date)
+
+# Assign occasions to detections
+human_detections$Occasion <- floor(
+  as.numeric(difftime(human_detections$Date, start_date, units = "days")) / 3
+) + 1
+
+# Count per station × occasion
+human_counts <- human_detections %>%
+  group_by(Station, Occasion) %>%
+  summarise(Human_Activity = n(), .groups = 'drop')
+
+# Create matrix
+human_matrix <- matrix(0, nrow = 71, ncol = n_occasions)
+rownames(human_matrix) <- effort$station
+colnames(human_matrix) <- paste0("Occ", 1:n_occasions)
+
+for(i in 1:nrow(human_counts)) {
+  station <- human_counts$Station[i]
+  occ <- human_counts$Occasion[i]
+  
+  if(station %in% rownames(human_matrix) & occ <= n_occasions) {
+    human_matrix[station, occ] <- human_counts$Human_Activity[i]
+  }
+}
+
+cat("Human activity matrix calculated\n")
+cat("Total human detections:", sum(human_matrix), "\n\n")
+
+# PART 6: CALCULATE COMPETITOR ACTIVITY PER OCCASION × STATION
+
+cat("=== CALCULATING COMPETITOR ACTIVITY ===\n")
+
+# Filter competitor detections
+competitor_species <- c("Panthera pardus", "Acinonyx jubatus")
+competitor_detections <- all_detections %>%
+  filter(Species %in% competitor_species,
+         Date >= start_date,
+         Date <= end_date)
+
+# Assign occasions
+competitor_detections$Occasion <- floor(
+  as.numeric(difftime(competitor_detections$Date, start_date, units = "days")) / 3
+) + 1
+
+# Count per station × occasion
+competitor_counts <- competitor_detections %>%
+  group_by(Station, Occasion) %>%
+  summarise(Competitor_Activity = n(), .groups = 'drop')
+
+# Create matrix
+competitor_matrix <- matrix(0, nrow = 71, ncol = n_occasions)
+rownames(competitor_matrix) <- effort$station
+colnames(competitor_matrix) <- paste0("Occ", 1:n_occasions)
+
+for(i in 1:nrow(competitor_counts)) {
+  station <- competitor_counts$Station[i]
+  occ <- competitor_counts$Occasion[i]
+  
+  if(station %in% rownames(competitor_matrix) & occ <= n_occasions) {
+    competitor_matrix[station, occ] <- competitor_counts$Competitor_Activity[i]
+  }
+}
+
+cat("Competitor activity matrix calculated\n")
+cat("Total competitor detections:", sum(competitor_matrix), "\n\n")
+
+# PART 7: EXPORT MATRICES
+
+cat("=== EXPORTING COVARIATE MATRICES ===\n")
+
+# Effort
+effort_df <- as.data.frame(effort_matrix)
+effort_df <- cbind(Station = rownames(effort_matrix), effort_df)
+write.csv(effort_df, "obs_covariate_effort_3day.csv", row.names = FALSE)
+
+# Human activity
+human_df <- as.data.frame(human_matrix)
+human_df <- cbind(Station = rownames(human_matrix), human_df)
+write.csv(human_df, "obs_covariate_human_3day.csv", row.names = FALSE)
+
+# Competitor activity
+competitor_df <- as.data.frame(competitor_matrix)
+competitor_df <- cbind(Station = rownames(competitor_matrix), competitor_df)
+write.csv(competitor_df, "obs_covariate_competitor_3day.csv", row.names = FALSE)
+
+# Occasion info (with moon phase)
+write.csv(occasion_info, "occasion_info_3day.csv", row.names = FALSE)
+
+cat("\nFiles created:\n")
+cat("• obs_covariate_effort_3day.csv\n")
+cat("• obs_covariate_human_3day.csv\n")
+cat("• obs_covariate_competitor_3day.csv\n")
+cat("• occasion_info_3day.csv\n\n")
+
+# PART 8: SUMMARY STATISTICS
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("                   SUMMARY STATISTICS                           \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+cat("EFFORT:\n")
+cat(sprintf("  Mean: %.2f days per occasion\n", mean(effort_matrix)))
+cat(sprintf("  Range: %d - %d days\n", min(effort_matrix), max(effort_matrix)))
+cat(sprintf("  Occasions with 0 effort: %d (%.1f%%)\n", 
+            sum(effort_matrix == 0), 
+            100 * sum(effort_matrix == 0) / length(effort_matrix)))
+
+cat("\nMOON ILLUMINATION:\n")
+cat(sprintf("  Mean: %.3f\n", mean(moon_illum)))
+cat(sprintf("  Range: %.3f - %.3f\n", min(moon_illum), max(moon_illum)))
+
+cat("\nHUMAN ACTIVITY:\n")
+cat(sprintf("  Total detections: %d\n", sum(human_matrix)))
+cat(sprintf("  Occasions with activity: %d / %d\n", 
+            sum(colSums(human_matrix) > 0), n_occasions))
+cat(sprintf("  Mean per occasion: %.2f\n", mean(human_matrix)))
+
+cat("\nCOMPETITOR ACTIVITY:\n")
+cat(sprintf("  Total detections: %d\n", sum(competitor_matrix)))
+cat(sprintf("  Occasions with activity: %d / %d\n", 
+            sum(colSums(competitor_matrix) > 0), n_occasions))
+cat(sprintf("  Mean per occasion: %.2f\n", mean(competitor_matrix)))
+
+# per plot
+
+library(ggplot2)
+
+# Plot 1: Moon illumination over time
+p_moon <- ggplot(occasion_info, aes(x = Occasion, y = Moon_Illumination)) +
+  geom_line(color = "#FDE725", linewidth = 1.5) +
+  geom_point(color = "#FDE725", size = 3) +
+  labs(title = "Moon Illumination - Fish River Canyon",
+       x = "Occasion (3-day periods)", 
+       y = "Moon Illumination (0-1)") +
+  theme_bw()
+
+ggsave("moon_illumination_3day.png", p_moon, width = 10, height = 5)
+
+# Plot 2: Effort distribution
+effort_vec <- as.vector(effort_matrix)
+p_effort <- ggplot(data.frame(effort = effort_vec), aes(x = effort)) +
+  geom_histogram(fill = "#31688E", color = "black", bins = 10) +
+  labs(title = "Distribution of Effort",
+       x = "Days active per occasion", y = "Frequency") +
+  theme_bw()
+
+ggsave("effort_distribution_3day.png", p_effort, width = 8, height = 5)
