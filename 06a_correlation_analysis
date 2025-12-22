@@ -9,3 +9,206 @@ library(corrplot)
 library(gridExtra)
 
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(gridExtra)
+library(car)
+library(viridis)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: LOAD DATA
+
+# Site covariates
+site_cov <- read.csv("camera_traps_covariates_POINT.csv", stringsAsFactors = FALSE)
+
+# Detection matrix (3-day)
+count_matrix <- read.csv("count_matrix_3day.csv", stringsAsFactors = FALSE)
+
+# Extract station names
+stations <- count_matrix$Station
+y_matrix <- as.matrix(count_matrix[, -1])
+rownames(y_matrix) <- stations
+
+# Calculate detection metrics per station
+detection_metrics <- data.frame(
+  Station = stations,
+  N_Detections = rowSums(y_matrix > 0),
+  Total_Count = rowSums(y_matrix),
+  Detection_Rate = rowSums(y_matrix > 0) / ncol(y_matrix),
+  Presence = ifelse(rowSums(y_matrix) > 0, 1, 0)
+)
+
+# PART 2: MERGE WITH SITE COVARIATES
+
+# Rename station column
+station_col <- names(site_cov)[1]
+names(site_cov)[names(site_cov) == station_col] <- "Station"
+
+# Select covariates (EXCLUDE slope to resolve collinearity, use UTM coordinates X, Y)
+site_cov_clean <- site_cov %>%
+  select(Station, elevation, tri, tpi, aspect,
+         dist_fish_river, dist_konkiep_river, dist_water_points,
+         dist_tourist_road, dist_staff_buildings,
+         Human_Activity, Competitor_Detections, X, Y)
+
+# Merge
+analysis_data <- merge(detection_metrics, site_cov_clean, by = "Station")
+
+cat("Data merged:", nrow(analysis_data), "stations\n")
+cat("slope removed to resolve collinearity with tri\n\n")
+
+# PART 3: CORRELATION MATRIX
+
+cat("=== CORRELATION ANALYSIS ===\n\n")
+
+# Select variables for correlation
+cor_vars <- analysis_data %>%
+  select(Detection_Rate, Total_Count, Presence,
+         elevation, tri, tpi,
+         dist_water_points, dist_fish_river, dist_konkiep_river,
+         dist_tourist_road, dist_staff_buildings,
+         Human_Activity, Competitor_Detections)
+
+# Calculate correlations (Pearson)
+cor_matrix <- cor(cor_vars, use = "pairwise.complete.obs", method = "pearson")
+
+# Extract correlations with detection metrics
+cor_with_detection <- cor_matrix[c("Detection_Rate", "Total_Count", "Presence"), ]
+
+cat("CORRELATIONS WITH HYENA DETECTIONS:\n")
+cat("(Detection_Rate = proportion of occasions with detection)\n\n")
+
+# Print formatted table
+cor_table <- as.data.frame(t(cor_with_detection))
+cor_table <- cor_table[!rownames(cor_table) %in% c("Detection_Rate", "Total_Count", "Presence"), ]
+cor_table <- cor_table[order(-abs(cor_table$Detection_Rate)), ]
+
+print(round(cor_table, 3))
+
+# Export
+write.csv(cor_table, "correlation_detections_covariates.csv", row.names = TRUE)
+
+# PART 4: INTERPRETATION TABLE
+
+# Function to interpret correlation
+interpret_cor <- function(r) {
+  if(abs(r) < 0.1) return("Negligible")
+  if(abs(r) < 0.3) return("Weak")
+  if(abs(r) < 0.5) return("Moderate")
+  if(abs(r) < 0.7) return("Strong")
+  return("Very strong")
+}
+
+# Create interpretation table
+interp_table <- data.frame(
+  Covariate = rownames(cor_table),
+  Correlation_r = round(cor_table$Detection_Rate, 3),
+  Strength = sapply(cor_table$Detection_Rate, interpret_cor),
+  Direction = ifelse(cor_table$Detection_Rate > 0, "Positive", "Negative"),
+  Significance = ifelse(abs(cor_table$Detection_Rate) > 0.15, "Notable", "Weak")
+)
+
+print(interp_table)
+
+write.csv(interp_table, "correlation_interpretation.csv", row.names = FALSE)
+
+#PART 5: VISUALIZATION
+
+cat("\n=== CREATING PLOTS ===\n")
+
+# Plot 1: Correlation heatmap
+png("correlation_heatmap.png", width = 1000, height = 800, res = 120)
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, tl.cex = 0.8,
+         addCoef.col = "black", number.cex = 0.6,
+         col = colorRampPalette(c("khaki1", "white", "darkorchid4"))(200),
+         title = "Correlation Matrix: Covariates vs Detections",
+         mar = c(0,0,2,0))
+dev.off()
+
+# Plot 2: Barplot of correlations with Detection_Rate
+cor_plot_data <- data.frame(
+  Covariate = rownames(cor_table),
+  Correlation = cor_table$Detection_Rate
+)
+
+p_cor <- ggplot(cor_plot_data, aes(x = reorder(Covariate, Correlation), y = Correlation)) +
+  geom_bar(stat = "identity", aes(fill = Correlation > 0), width = 0.7) +
+  scale_fill_manual(values = c("#2166AC", "springgreen4"), guide = "none") +
+  coord_flip() +
+  geom_hline(yintercept = 0, linewidth = 0.5) +
+  geom_hline(yintercept = c(-0.15, 0.15), linetype = "dashed", color = "gray50") +
+  labs(title = "Correlations with Hyena Detection Rate",
+       subtitle = "Dashed lines = ±0.15 threshold for 'notable' correlation",
+       x = "Covariate", y = "Pearson Correlation (r)") +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+ggsave("correlation_barplot.png", p_cor, width = 10, height = 8)
+
+# Plot 3: Scatterplots for top 6 correlations
+top_vars <- head(rownames(cor_table), 6)
+
+plot_list <- list()
+for(i in 1:length(top_vars)) {
+  var <- top_vars[i]
+  
+  p <- ggplot(analysis_data, aes_string(x = var, y = "Detection_Rate")) +
+    geom_point(alpha = 0.6, size = 2, color = "#440154") +
+    geom_smooth(method = "lm", se = TRUE, color = "#FDE725", 
+                fill = "#FDE725", alpha = 0.2) +
+    labs(title = paste(var, "\nr =", round(cor_table[var, "Detection_Rate"], 3)),
+         x = var, y = "Detection Rate") +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10))
+  
+  plot_list[[i]] <- p
+}
+
+png("correlation_scatterplots.png", width = 1200, height = 800, res = 120)
+grid.arrange(grobs = plot_list, ncol = 3)
+dev.off()
+
+# PART 6: COLLINEARITY CHECK (VIF)
+
+# Candidate predictors for lambda
+predictors_final <- analysis_data %>%
+  select(elevation, tri, tpi,
+         dist_water_points, dist_fish_river,
+         Human_Activity, Competitor_Detections)
+
+# Remove rows with NA
+predictors_complete <- na.omit(predictors_final)
+
+# Fit linear model (just to calculate VIF)
+lm_vif <- lm(Detection_Rate ~ ., 
+             data = cbind(Detection_Rate = analysis_data$Detection_Rate[complete.cases(predictors_final)],
+                          predictors_complete))
+
+vif_values <- vif(lm_vif)
+
+cat("\n=== VIF CHECK ===\n")
+print(round(vif_values, 2))
+
+# Flag problematic variables
+if(all(vif_values < 5)) {
+  cat("\n✓ No collinearity detected (all VIF < 5)\n")
+} else if(any(vif_values > 10)) {
+  cat("\n⚠ HIGH collinearity (VIF > 10):\n")
+  cat(paste(names(vif_values[vif_values > 10]), collapse = ", "), "\n")
+} else {
+  cat("\n⚠ Moderate collinearity (VIF 5-10):\n")
+  cat(paste(names(vif_values[vif_values > 5]), collapse = ", "), "\n")
+}
+
+write.csv(data.frame(Variable = names(vif_values), VIF = vif_values),
+          "vif_final.csv", row.names = FALSE)
+
+write.csv(analysis_data, "analysis_data_final.csv", row.names = FALSE)
+
+cat("\n=== ANALYSIS COMPLETE ===\n")
+cat("Final predictors:", paste(names(predictors_final), collapse = ", "), "\n")
+cat("Files saved: correlation tables, plots, VIF, final dataset\n")
