@@ -1,0 +1,11 @@
+# CORRELATION ANALYSIS: COVARIATES vs HYENA DETECTIONS
+
+# Purpose: Calculate correlations to justify a priori hypotheses for RN models
+# Output: Correlation matrix, plots, and interpretation table
+
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(gridExtra)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
