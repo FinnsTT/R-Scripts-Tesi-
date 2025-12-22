@@ -1,0 +1,4 @@
+# ROYLE-NICHOLS DATA PREPARATION (3-day occasions)
+ 
+# Purpose: Prepare detection/non-detection matrix and covariates for RN models
+# Output: unmarkedFrameOccu object ready for model fitting
