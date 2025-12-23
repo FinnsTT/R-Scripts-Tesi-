@@ -10,3 +10,32 @@ library(viridis)
 library(AICcmodavg)
 
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# LOAD DATA
+# ══════════════════════════════════════════════════════════════════════════════
+
+umf <- readRDS("unmarkedFrame_RN_3day.rds")
+siteCovs_original <- read.csv("siteCovs_original_scale.csv", stringsAsFactors = FALSE)
+correlation_results <- read.csv("correlation_interpretation.csv", stringsAsFactors = FALSE)
+
+cat("Data loaded. Sites:", numSites(umf), "| Occasions:", obsNum(umf), "\n\n")
+
+# A PRIORI HYPOTHESES (BASED ON ECOLOGY + CORRELATIONS)
+
+# DETECTION (r):
+# H1: effort → (+) More camera-days = higher detection probability
+# H2: moon → (?) Full moon may increase OR decrease activity
+# H3: human → (?) May affect detection behavior
+
+# ABUNDANCE (λ):
+# H1: elevation → (+) Higher areas = plateau habitat, preferred
+# H2: tri → (+) Rugged terrain = denning sites, cover
+# H3: dist_water_points → (-) Water = limiting resource in arid system
+# H4: Human_Activity → (+/-) Shield effect vs avoidance
+# H5: Competitor_Detections → (+) Coexistence in quality habitat
+
+# INTERACTIONS:
+# H1: tri × dist_water_points → Ruggedness important only far from water
+
+
+
