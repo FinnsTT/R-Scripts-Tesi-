@@ -2,3 +2,228 @@
  
 # Purpose: Prepare detection/non-detection matrix and covariates for RN models
 # Output: unmarkedFrameOccu object ready for model fitting
+
+library(unmarked)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: LOAD DATA
+
+# Count matrix (3-day occasions)
+count_matrix <- read.csv("count_matrix_3day.csv", stringsAsFactors = FALSE)
+
+# Site covariates
+site_cov <- read.csv("camera_traps_covariates_POINT.csv", stringsAsFactors = FALSE)
+
+# Observation covariates
+effort_matrix <- read.csv("obs_covariate_effort_3day.csv", stringsAsFactors = FALSE)
+human_matrix <- read.csv("obs_covariate_human_3day.csv", stringsAsFactors = FALSE)
+competitor_matrix <- read.csv("obs_covariate_competitor_3day.csv", stringsAsFactors = FALSE)
+occasion_info <- read.csv("occasion_info_3day.csv", stringsAsFactors = FALSE)
+
+# PART 2: CREATE DETECTION/NON-DETECTION MATRIX (0/1)
+
+stations <- count_matrix$Station
+y_counts <- as.matrix(count_matrix[, -1])
+rownames(y_counts) <- stations
+
+# Convert counts to detection/non-detection (0/1)
+y_binary <- ifelse(y_counts > 0, 1, 0)
+
+cat("Detection matrix:", nrow(y_binary), "sites ×", ncol(y_binary), "occasions\n")
+cat("Detections:", sum(y_binary), "| Sites with ≥1:", sum(rowSums(y_binary) > 0), "\n")
+
+# PART 3: PREPARE SITE COVARIATES
+
+# Rename station column
+names(site_cov)[1] <- "Station"
+
+# Select and standardize covariates
+siteCovs <- site_cov %>%
+  filter(Station %in% stations) %>%
+  arrange(match(Station, stations)) %>%
+  select(Station, elevation, tri, tpi,
+         dist_water_points, dist_fish_river, dist_konkiep_river,
+         dist_tourist_road, dist_staff_buildings,
+         Human_Activity, Competitor_Detections)
+
+# Standardize (z-score) for model fitting
+siteCovs_std <- siteCovs %>% select(-Station) %>% scale() %>% as.data.frame()
+
+# Keep original scale for later plotting
+siteCovs_original <- siteCovs
+
+# PART 4: PREPARE OBSERVATION COVARIATES
+
+# Match occasions between count_matrix and obs_covariates
+# count_matrix has occasions corresponding to S10-S21 only
+count_cols <- colnames(count_matrix)[-1]
+occasion_numbers <- as.numeric(gsub("X", "", count_cols))
+cols_to_keep <- c(1, occasion_numbers + 1)
+
+# Filter and arrange observation covariates
+effort_mat <- effort_matrix[, cols_to_keep] %>%
+  arrange(match(Station, stations)) %>%
+  select(-Station) %>%
+  as.matrix()
+
+human_mat <- human_matrix[, cols_to_keep] %>%
+  arrange(match(Station, stations)) %>%
+  select(-Station) %>%
+  as.matrix()
+
+competitor_mat <- competitor_matrix[, cols_to_keep] %>%
+  arrange(match(Station, stations)) %>%
+  select(-Station) %>%
+  as.matrix()
+
+# Standardize observation covariates
+effort_std <- scale(effort_mat)
+human_std <- scale(human_mat)
+competitor_std <- scale(competitor_mat)
+
+# Moon illumination - filter to matching occasions
+# occasion_names are the occasion IDs from count_matrix
+moon_vec <- occasion_info$Moon_Illumination[occasion_numbers]
+moon_mat <- matrix(rep(moon_vec, each = nrow(y_binary)), 
+                   nrow = nrow(y_binary), byrow = FALSE)
+moon_std <- scale(moon_mat)
+
+# Create list of observation covariates
+obsCovs <- list(
+  effort = effort_std,
+  moon = moon_std,
+  human = human_std,
+  competitor = competitor_std
+)
+
+# Apply effort mask
+y_binary_clean <- y_binary
+y_binary_clean[effort_mat == 0] <- NA
+
+# Create unmarked frame
+umf <- unmarkedFrameOccu(
+  y = y_binary_clean,
+  siteCovs = siteCovs_std,
+  obsCovs = obsCovs
+)
+
+cat("UMF created:", numSites(umf), "sites ×", obsNum(umf), "occasions\n")
+summary(umf)
+
+# PART 5: HANDLE MISSING DATA (effort = 0)
+
+# Where effort = 0, set detection to NA (camera not active)
+y_binary_clean <- y_binary
+y_binary_clean[effort_mat == 0] <- NA
+
+n_na <- sum(is.na(y_binary_clean))
+cat("NA values (effort=0):", n_na, "of", length(y_binary_clean), 
+    sprintf("(%.1f%%)\n", 100*n_na/length(y_binary_clean)))
+
+# PART 6: CREATE UNMARKEDFRAME
+
+umf <- unmarkedFrameOccu(
+  y = y_binary_clean,
+  siteCovs = siteCovs_std,
+  obsCovs = obsCovs
+)
+
+cat("\nunmarkedFrameOccu created successfully\n")
+cat("Sites:", numSites(umf), "\n")
+cat("Occasions:", obsNum(umf), "\n")
+
+# PART 7: SUMMARY STATISTICS
+
+summary(umf)
+
+# Calculate naive occupancy
+naive_occ <- sum(rowSums(y_binary_clean, na.rm = TRUE) > 0) / nrow(y_binary_clean)
+cat("\nNaive occupancy:", round(naive_occ, 3), "\n")
+
+# Detection frequency
+det_freq <- colSums(y_binary_clean, na.rm = TRUE)
+mean_det_freq <- mean(det_freq)
+cat("Mean detections per occasion:", round(mean_det_freq, 2), "\n")
+
+# PART 8: EXPLORATORY PLOTS
+
+# Plot 1: Detection frequency over time
+det_data <- data.frame(
+  Occasion = 1:ncol(y_binary_clean),
+  Detections = colSums(y_binary_clean, na.rm = TRUE),
+  Active_Cameras = colSums(!is.na(y_binary_clean))
+)
+
+p1 <- ggplot(det_data, aes(x = Occasion, y = Detections)) +
+  geom_line(color = viridis(1, option = "viridis"), linewidth = 1) +
+  geom_point(color = viridis(1, option = "viridis"), size = 2) +
+  labs(title = "Detection Frequency Over Time (3-day occasions)",
+       x = "Occasion", y = "N Detections") +
+  theme_bw()
+
+ggsave("detection_frequency_temporal.png", p1, width = 12, height = 5)
+
+# Plot 2: Detections per station
+station_det <- data.frame(
+  Station = stations,
+  N_Detections = rowSums(y_binary_clean, na.rm = TRUE),
+  N_Active_Occasions = rowSums(!is.na(y_binary_clean))
+)
+
+p2 <- ggplot(station_det, aes(x = N_Detections)) +
+  geom_histogram(bins = 20, fill = viridis(1, option = "plasma"), color = "black") +
+  labs(title = "Distribution of Detections per Station",
+       x = "N Detections", y = "Frequency") +
+  theme_bw()
+
+ggsave("detection_distribution_stations.png", p2, width = 8, height = 5)
+
+# Plot 3: Detection vs effort
+effort_summary <- data.frame(
+  Station = stations,
+  Total_Effort = rowSums(effort_mat, na.rm = TRUE),
+  N_Detections = rowSums(y_binary_clean, na.rm = TRUE),
+  Detection_Rate = rowSums(y_binary_clean, na.rm = TRUE) / rowSums(!is.na(y_binary_clean))
+)
+
+p3 <- ggplot(effort_summary, aes(x = Total_Effort, y = Detection_Rate)) +
+  geom_point(size = 2, alpha = 0.6, color = viridis(1, option = "mako")) +
+  geom_smooth(method = "loess", se = TRUE, color = viridis(1, option = "rocket"),
+              fill = viridis(1, option = "rocket", alpha = 0.3)) +
+  labs(title = "Detection Rate vs Total Effort",
+       x = "Total Effort (camera-days)", y = "Detection Rate") +
+  theme_bw()
+
+ggsave("detection_vs_effort.png", p3, width = 8, height = 6)
+
+# PART 9: EXPORT
+
+# Save unmarkedFrame
+saveRDS(umf, "unmarkedFrame_RN_3day.rds")
+
+# Save original scale covariates for plotting
+write.csv(siteCovs_original, "siteCovs_original_scale.csv", row.names = FALSE)
+
+# Save standardization parameters for back-transformation
+std_params <- data.frame(
+  Variable = names(siteCovs_std),
+  Mean = sapply(siteCovs[, names(siteCovs_std)], mean, na.rm = TRUE),
+  SD = sapply(siteCovs[, names(siteCovs_std)], sd, na.rm = TRUE)
+)
+write.csv(std_params, "standardization_parameters.csv", row.names = FALSE)
+
+# Save detection summary
+write.csv(station_det, "station_detection_summary.csv", row.names = FALSE)
+
+cat("\nFiles created:\n")
+cat("• unmarkedFrame_RN_3day.rds\n")
+cat("• siteCovs_original_scale.csv\n")
+cat("• standardization_parameters.csv\n")
+cat("• station_detection_summary.csv\n")
+cat("• detection_frequency_temporal.png\n")
+cat("• detection_distribution_stations.png\n")
+cat("• detection_vs_effort.png\n")
