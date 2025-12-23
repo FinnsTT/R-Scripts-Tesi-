@@ -175,7 +175,10 @@ station_summary <- data.frame(
 )
 
 p3 <- ggplot(station_summary, aes(x = Total_Count)) +
-  geom_histogram(bins = 20, fill = viridis(1, option = "mako"), color = "black") +
+  geom_histogram(bins = 20, fill = "#2C3E50", color = "white") +  # Blu petrolio
+  labs(title = "Total Counts per Station",
+       x = "Total Count", y = "Frequency") +
+  theme_bw()
   labs(title = "Total Counts per Station",
        x = "Total Count", y = "Frequency") +
   theme_bw()
