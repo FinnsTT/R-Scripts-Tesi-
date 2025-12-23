@@ -12,7 +12,6 @@ library(AICcmodavg)
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
 
 # LOAD DATA
-# ══════════════════════════════════════════════════════════════════════════════
 
 umf <- readRDS("unmarkedFrame_RN_3day.rds")
 siteCovs_original <- read.csv("siteCovs_original_scale.csv", stringsAsFactors = FALSE)
