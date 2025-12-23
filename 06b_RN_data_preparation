@@ -30,11 +30,10 @@ stations <- count_matrix$Station
 y_counts <- as.matrix(count_matrix[, -1])
 rownames(y_counts) <- stations
 
-# Convert counts to detection/non-detection (0/1)
-y_binary <- ifelse(y_counts > 0, 1, 0)
-
-cat("Detection matrix:", nrow(y_binary), "sites ×", ncol(y_binary), "occasions\n")
-cat("Detections:", sum(y_binary), "| Sites with ≥1:", sum(rowSums(y_binary) > 0), "\n")
+cat("Count matrix:", nrow(y_counts), "sites ×", ncol(y_counts), "occasions\n")
+cat("Total counts:", sum(y_counts, na.rm = TRUE), "\n")
+cat("Sites with ≥1 detection:", sum(rowSums(y_counts) > 0), "\n")
+cat("Max count:", max(y_counts), "\n\n")
 
 # PART 3: PREPARE SITE COVARIATES
 
@@ -50,10 +49,7 @@ siteCovs <- site_cov %>%
          dist_tourist_road, dist_staff_buildings,
          Human_Activity, Competitor_Detections)
 
-# Standardize (z-score) for model fitting
 siteCovs_std <- siteCovs %>% select(-Station) %>% scale() %>% as.data.frame()
-
-# Keep original scale for later plotting
 siteCovs_original <- siteCovs
 
 # PART 4: PREPARE OBSERVATION COVARIATES
@@ -61,7 +57,11 @@ siteCovs_original <- siteCovs
 # Match occasions between count_matrix and obs_covariates
 # count_matrix has occasions corresponding to S10-S21 only
 count_cols <- colnames(count_matrix)[-1]
-occasion_numbers <- as.numeric(gsub("X", "", count_cols))
+occasion_numbers <- as.numeric(gsub("X", "", count_cols))  # ← QUESTA È LA FIX
+
+cat("Occasion numbers:", length(occasion_numbers), "\n")
+cat("Range:", min(occasion_numbers), "to", max(occasion_numbers), "\n\n")
+
 cols_to_keep <- c(1, occasion_numbers + 1)
 
 # Filter and arrange observation covariates
@@ -88,8 +88,8 @@ competitor_std <- scale(competitor_mat)
 # Moon illumination - filter to matching occasions
 # occasion_names are the occasion IDs from count_matrix
 moon_vec <- occasion_info$Moon_Illumination[occasion_numbers]
-moon_mat <- matrix(rep(moon_vec, each = nrow(y_binary)), 
-                   nrow = nrow(y_binary), byrow = FALSE)
+moon_mat <- matrix(rep(moon_vec, each = nrow(y_counts)), 
+                   nrow = nrow(y_counts), byrow = FALSE)
 moon_std <- scale(moon_mat)
 
 # Create list of observation covariates
@@ -100,39 +100,24 @@ obsCovs <- list(
   competitor = competitor_std
 )
 
+# PART 5: HANDLE MISSING DATA (effort = 0 → NA)
+
 # Apply effort mask
-y_binary_clean <- y_binary
-y_binary_clean[effort_mat == 0] <- NA
+y_counts_clean <- y_counts
+y_counts_clean[effort_mat == 0] <- NA
 
-# Create unmarked frame
-umf <- unmarkedFrameOccu(
-  y = y_binary_clean,
-  siteCovs = siteCovs_std,
-  obsCovs = obsCovs
-)
-
-cat("UMF created:", numSites(umf), "sites ×", obsNum(umf), "occasions\n")
-summary(umf)
-
-# PART 5: HANDLE MISSING DATA (effort = 0)
-
-# Where effort = 0, set detection to NA (camera not active)
-y_binary_clean <- y_binary
-y_binary_clean[effort_mat == 0] <- NA
-
-n_na <- sum(is.na(y_binary_clean))
-cat("NA values (effort=0):", n_na, "of", length(y_binary_clean), 
-    sprintf("(%.1f%%)\n", 100*n_na/length(y_binary_clean)))
+cat("NA values (effort=0):", sum(is.na(y_counts_clean)), "\n")
 
 # PART 6: CREATE UNMARKEDFRAME
 
-umf <- unmarkedFrameOccu(
-  y = y_binary_clean,
+# unmarkedFramePCount for Royle-Nichols (uses counts)
+umf <- unmarkedFramePCount(
+  y = y_counts_clean,
   siteCovs = siteCovs_std,
   obsCovs = obsCovs
 )
 
-cat("\nunmarkedFrameOccu created successfully\n")
+cat("\nunmarkedFramePCount created\n")
 cat("Sites:", numSites(umf), "\n")
 cat("Occasions:", obsNum(umf), "\n")
 
@@ -140,65 +125,79 @@ cat("Occasions:", obsNum(umf), "\n")
 
 summary(umf)
 
-# Calculate naive occupancy
-naive_occ <- sum(rowSums(y_binary_clean, na.rm = TRUE) > 0) / nrow(y_binary_clean)
+# Naive occupancy (proportion sites with ≥1 detection)
+naive_occ <- sum(rowSums(y_counts_clean, na.rm = TRUE) > 0) / nrow(y_counts_clean)
 cat("\nNaive occupancy:", round(naive_occ, 3), "\n")
 
-# Detection frequency
-det_freq <- colSums(y_binary_clean, na.rm = TRUE)
-mean_det_freq <- mean(det_freq)
-cat("Mean detections per occasion:", round(mean_det_freq, 2), "\n")
+# Mean count per occasion
+mean_count <- mean(y_counts_clean, na.rm = TRUE)
+cat("Mean count per occasion:", round(mean_count, 3), "\n")
 
 # PART 8: EXPLORATORY PLOTS
 
-# Plot 1: Detection frequency over time
-det_data <- data.frame(
-  Occasion = 1:ncol(y_binary_clean),
-  Detections = colSums(y_binary_clean, na.rm = TRUE),
-  Active_Cameras = colSums(!is.na(y_binary_clean))
+# Plot 1: Count frequency over time
+count_data <- data.frame(
+  Occasion = 1:ncol(y_counts_clean),
+  Total_Count = colSums(y_counts_clean, na.rm = TRUE),
+  N_Detections = colSums(y_counts_clean > 0, na.rm = TRUE),
+  Active_Cameras = colSums(!is.na(y_counts_clean))
 )
 
-p1 <- ggplot(det_data, aes(x = Occasion, y = Detections)) +
-  geom_line(color = viridis(1, option = "viridis"), linewidth = 1) +
-  geom_point(color = viridis(1, option = "viridis"), size = 2) +
-  labs(title = "Detection Frequency Over Time (3-day occasions)",
-       x = "Occasion", y = "N Detections") +
+p1 <- ggplot(count_data, aes(x = Occasion)) +
+  geom_line(aes(y = Total_Count, color = "Total Count"), linewidth = 1) +
+  geom_line(aes(y = N_Detections, color = "N Detections"), linewidth = 1) +
+  scale_color_viridis_d(option = "viridis", name = "") +
+  labs(title = "Hyena Counts Over Time (3-day occasions)",
+       x = "Occasion", y = "Count") +
   theme_bw()
 
-ggsave("detection_frequency_temporal.png", p1, width = 12, height = 5)
+ggsave("count_frequency_temporal.png", p1, width = 12, height = 5)
 
-# Plot 2: Detections per station
-station_det <- data.frame(
+# Plot 2: Distribution of counts
+count_vec <- as.vector(y_counts_clean)
+count_vec <- count_vec[!is.na(count_vec) & count_vec > 0]
+
+p2 <- ggplot(data.frame(Count = count_vec), aes(x = Count)) +
+  geom_histogram(binwidth = 1, fill = viridis(1, option = "plasma"), color = "black") +
+  labs(title = "Distribution of Non-Zero Counts",
+       x = "Count per Occasion", y = "Frequency") +
+  theme_bw()
+
+ggsave("count_distribution.png", p2, width = 8, height = 5)
+
+# Plot 3: Counts per station
+station_summary <- data.frame(
   Station = stations,
-  N_Detections = rowSums(y_binary_clean, na.rm = TRUE),
-  N_Active_Occasions = rowSums(!is.na(y_binary_clean))
+  Total_Count = rowSums(y_counts_clean, na.rm = TRUE),
+  N_Detections = rowSums(y_counts_clean > 0, na.rm = TRUE),
+  N_Active_Occasions = rowSums(!is.na(y_counts_clean)),
+  Mean_Count = rowMeans(y_counts_clean, na.rm = TRUE)
 )
 
-p2 <- ggplot(station_det, aes(x = N_Detections)) +
-  geom_histogram(bins = 20, fill = viridis(1, option = "plasma"), color = "black") +
-  labs(title = "Distribution of Detections per Station",
-       x = "N Detections", y = "Frequency") +
+p3 <- ggplot(station_summary, aes(x = Total_Count)) +
+  geom_histogram(bins = 20, fill = viridis(1, option = "mako"), color = "black") +
+  labs(title = "Total Counts per Station",
+       x = "Total Count", y = "Frequency") +
   theme_bw()
 
-ggsave("detection_distribution_stations.png", p2, width = 8, height = 5)
+ggsave("counts_per_station.png", p3, width = 8, height = 5)
 
-# Plot 3: Detection vs effort
+# Plot 4: Count vs effort
 effort_summary <- data.frame(
   Station = stations,
   Total_Effort = rowSums(effort_mat, na.rm = TRUE),
-  N_Detections = rowSums(y_binary_clean, na.rm = TRUE),
-  Detection_Rate = rowSums(y_binary_clean, na.rm = TRUE) / rowSums(!is.na(y_binary_clean))
+  Total_Count = rowSums(y_counts_clean, na.rm = TRUE)
 )
 
-p3 <- ggplot(effort_summary, aes(x = Total_Effort, y = Detection_Rate)) +
-  geom_point(size = 2, alpha = 0.6, color = viridis(1, option = "mako")) +
-  geom_smooth(method = "loess", se = TRUE, color = viridis(1, option = "rocket"),
-              fill = viridis(1, option = "rocket", alpha = 0.3)) +
-  labs(title = "Detection Rate vs Total Effort",
-       x = "Total Effort (camera-days)", y = "Detection Rate") +
+p4 <- ggplot(effort_summary, aes(x = Total_Effort, y = Total_Count)) +
+  geom_point(size = 2, alpha = 0.6, color = viridis(1, option = "rocket")) +
+  geom_smooth(method = "lm", se = TRUE, color = viridis(1, option = "plasma"),
+              fill = viridis(1, option = "plasma", alpha = 0.3)) +
+  labs(title = "Total Count vs Total Effort",
+       x = "Total Effort (camera-days)", y = "Total Count") +
   theme_bw()
 
-ggsave("detection_vs_effort.png", p3, width = 8, height = 6)
+ggsave("count_vs_effort.png", p4, width = 8, height = 6)
 
 # PART 9: EXPORT
 
@@ -217,13 +216,14 @@ std_params <- data.frame(
 write.csv(std_params, "standardization_parameters.csv", row.names = FALSE)
 
 # Save detection summary
-write.csv(station_det, "station_detection_summary.csv", row.names = FALSE)
+write.csv(station_summary, "station_count_summary.csv", row.names = FALSE)
 
 cat("\nFiles created:\n")
-cat("• unmarkedFrame_RN_3day.rds\n")
+cat("• unmarkedFrame_RN_3day.rds (with COUNTS)\n")
 cat("• siteCovs_original_scale.csv\n")
 cat("• standardization_parameters.csv\n")
-cat("• station_detection_summary.csv\n")
-cat("• detection_frequency_temporal.png\n")
-cat("• detection_distribution_stations.png\n")
-cat("• detection_vs_effort.png\n")
+cat("• station_count_summary.csv\n")
+cat("• count_frequency_temporal.png\n")
+cat("• count_distribution.png\n")
+cat("• counts_per_station.png\n")
+cat("• count_vs_effort.png\n")
