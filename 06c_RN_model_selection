@@ -1,0 +1,12 @@
+ ROYLE-NICHOLS MODEL SELECTION WITH A PRIORI HYPOTHESES
+ 
+# Purpose: Fit candidate models based on ecological hypotheses
+# Approach: NOT exploratory - models justified by ecology + correlations
+
+library(unmarked)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(AICcmodavg)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
