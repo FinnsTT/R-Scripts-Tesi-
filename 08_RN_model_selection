@@ -1,4 +1,4 @@
-  ROYLE-NICHOLS MODEL SELECTION WITH A PRIORI HYPOTHESES
+ROYLE-NICHOLS MODEL SELECTION WITH A PRIORI HYPOTHESES
  
 # Purpose: Fit candidate models based on ecological hypotheses
 # Approach: NOT exploratory - models justified by ecology + correlations
@@ -11,30 +11,137 @@ library(AICcmodavg)
 
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
 
-# LOAD DATA
-
+# Load data
 umf <- readRDS("unmarkedFrame_RN_3day.rds")
-siteCovs_original <- read.csv("siteCovs_original_scale.csv", stringsAsFactors = FALSE)
-correlation_results <- read.csv("correlation_interpretation.csv", stringsAsFactors = FALSE)
 
-cat("Data loaded. Sites:", numSites(umf), "| Occasions:", obsNum(umf), "\n\n")
+cat("Data loaded:", numSites(umf), "sites ×", obsNum(umf), "occasions\n\n")
 
-# A PRIORI HYPOTHESES (BASED ON ECOLOGY + CORRELATIONS)
+# STEP 1: SELECT DETECTION STRUCTURE
 
-# DETECTION (r):
-# H1: effort → (+) More camera-days = higher detection probability
-# H2: moon → (?) Full moon may increase OR decrease activity
-# H3: human → (?) May affect detection behavior
+cat("=== TESTING DETECTION STRUCTURES ===\n\n")
 
-# ABUNDANCE (λ):
-# H1: elevation → (+) Higher areas = plateau habitat, preferred
-# H2: tri → (+) Rugged terrain = denning sites, cover
-# H3: dist_water_points → (-) Water = limiting resource in arid system
-# H4: Human_Activity → (+/-) Shield effect vs avoidance
-# H5: Competitor_Detections → (+) Coexistence in quality habitat
+models_det <- list()
 
-# INTERACTIONS:
-# H1: tri × dist_water_points → Ruggedness important only far from water
+# Test detection structures (with moon now!)
+models_det$null <- pcount(~1 ~1, data = umf, K = 20, mixture = "NB")
+models_det$effort <- pcount(~effort ~1, data = umf, K = 20, mixture = "NB")
+models_det$effort_moon <- pcount(~effort + moon ~1, data = umf, K = 20, mixture = "NB")
+models_det$effort_human <- pcount(~effort + human ~1, data = umf, K = 20, mixture = "NB")
+models_det$full <- pcount(~effort + moon + human ~1, data = umf, K = 20, mixture = "NB")
 
+# Model selection
+det_aic <- aictab(models_det, 
+                  modnames = c("null", "effort", "effort+moon", 
+                               "effort+human", "full"))
 
+cat("DETECTION MODEL SELECTION:\n")
+print(det_aic, digits = 3)
 
+best_det <- as.character(det_aic$Modnames[1])
+cat("\nBest detection structure:", best_det, "\n\n")
+
+# Determine formula
+if(best_det == "null") {
+  det_formula <- "~1"
+} else if(best_det == "effort") {
+  det_formula <- "~effort"
+} else if(best_det == "effort+moon") {
+  det_formula <- "~effort + moon"
+} else if(best_det == "effort+human") {
+  det_formula <- "~effort + human"
+} else {
+  det_formula <- "~effort + moon + human"
+}
+
+# STEP 2: FIT ABUNDANCE MODELS
+
+cat("=== FITTING ABUNDANCE MODELS ===\n")
+cat("Using detection:", det_formula, "\n\n")
+
+models <- list()
+
+# Null
+models$m1_null <- pcount(as.formula(paste(det_formula, "~1")), 
+                         data = umf, K = 20, mixture = "NB")
+
+# Topography
+models$m2_elevation <- pcount(as.formula(paste(det_formula, "~elevation")), 
+                              data = umf, K = 20, mixture = "NB")
+
+models$m3_tri <- pcount(as.formula(paste(det_formula, "~tri")), 
+                        data = umf, K = 20, mixture = "NB")
+
+models$m4_topo <- pcount(as.formula(paste(det_formula, "~elevation + tri")), 
+                         data = umf, K = 20, mixture = "NB")
+
+# Water/Rivers
+models$m5_konkiep <- pcount(as.formula(paste(det_formula, "~dist_konkiep_river")), 
+                            data = umf, K = 20, mixture = "NB")
+
+models$m6_rivers <- pcount(as.formula(paste(det_formula, "~dist_fish_river + dist_konkiep_river")), 
+                           data = umf, K = 20, mixture = "NB")
+
+# Topography + Rivers
+models$m7_topo_konkiep <- pcount(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river")), 
+                                 data = umf, K = 20, mixture = "NB")
+
+models$m8_topo_rivers <- pcount(as.formula(paste(det_formula, "~elevation + tri + dist_fish_river + dist_konkiep_river")), 
+                                data = umf, K = 20, mixture = "NB")
+
+# + Human/Infrastructure
+models$m9_topo_konkiep_human <- pcount(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river + Human_Activity")), 
+                                       data = umf, K = 20, mixture = "NB")
+
+models$m10_topo_konkiep_staff <- pcount(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river + dist_staff_buildings")), 
+                                        data = umf, K = 20, mixture = "NB")
+
+# Full
+models$m11_full <- pcount(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river + dist_staff_buildings + Human_Activity")), 
+                          data = umf, K = 20, mixture = "NB")
+
+cat("All models fitted\n\n")
+
+# STEP 3: MODEL SELECTION
+
+cat("=== ABUNDANCE MODEL SELECTION ===\n\n")
+
+# Extract only abundance models (m1-m11)
+abundance_models <- models[grep("^m[0-9]", names(models))]
+
+# AIC table
+aic_table <- aictab(abundance_models, 
+                    modnames = names(abundance_models))
+
+print(aic_table, digits = 3)
+
+# Export
+write.csv(as.data.frame(aic_table), "model_selection_AIC.csv", row.names = FALSE)
+
+# STEP 4: TOP MODEL SUMMARY
+
+cat("\n=== TOP MODEL SUMMARY ===\n\n")
+
+top_model_name <- as.character(aic_table$Modnames[1])
+top_model <- abundance_models[[top_model_name]]
+
+print(summary(top_model))
+
+# Extract coefficients
+coef_lambda <- coef(top_model, type = "state")
+coef_p <- coef(top_model, type = "det")
+
+cat("\n--- ABUNDANCE (lambda) COEFFICIENTS ---\n")
+print(round(coef_lambda, 3))
+
+cat("\n--- DETECTION (p) COEFFICIENTS ---\n")
+print(round(coef_p, 3))
+
+# STEP 5: SAVE RESULTS
+
+saveRDS(models, "fitted_pcount_models.rds")
+saveRDS(top_model, "top_pcount_model.rds")
+
+cat("\nFiles saved:\n")
+cat("• model_selection_AIC.csv\n")
+cat("• fitted_pcount_models.rds\n")
+cat("• top_pcount_model.rds\n")
