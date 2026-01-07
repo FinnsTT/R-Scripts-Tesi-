@@ -1,4 +1,4 @@
-ROYLE-NICHOLS MODEL SELECTION WITH A PRIORI HYPOTHESES
+NMixture MODEL SELECTION WITH A PRIORI HYPOTHESES
  
 # Purpose: Fit candidate models based on ecological hypotheses
 # Approach: NOT exploratory - models justified by ecology + correlations
