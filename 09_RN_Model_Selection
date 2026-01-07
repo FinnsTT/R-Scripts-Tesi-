@@ -1,0 +1,4 @@
+# ROYLE-NICHOLS MODEL SELECTION WITH A PRIORI HYPOTHESES
+# 
+# Purpose: Fit Royle-Nichols models for OCCUPANCY estimation
+# Using: occuRN() with count data
