@@ -1,0 +1,4 @@
+# ROYLE-NICHOLS SPATIAL VISUALIZATION & AUTOCORRELATION
+# 
+# Purpose: Map predicted occupancy (from RN model) and check autocorrelation
+# Output: Spatial maps for λ and ψ, interpolated surfaces, Moran's I test
