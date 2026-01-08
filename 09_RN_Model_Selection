@@ -2,3 +2,172 @@
 # 
 # Purpose: Fit Royle-Nichols models for OCCUPANCY estimation
 # Using: occuRN() with count data
+
+library(unmarked)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(AICcmodavg)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# Load N-mixture frame
+umf_pcount <- readRDS("unmarkedFrame_RN_3day.rds")
+siteCovs_original <- read.csv("siteCovs_original_scale.csv")
+
+# Convert counts to BINARY for Royle-Nichols
+y_counts <- getY(umf_pcount)
+y_binary <- ifelse(y_counts > 0, 1, 0)  # Explicit binary conversion
+
+# Create unmarkedFrameOccu
+umf_rn <- unmarkedFrameOccu(
+  y = y_binary,
+  siteCovs = siteCovs(umf_pcount),
+  obsCovs = obsCovs(umf_pcount)
+)
+
+cat("Royle-Nichols frame created:", numSites(umf_rn), "sites ×", obsNum(umf_rn), "occasions\n")
+cat("Naive occupancy:", round(sum(rowSums(y_binary, na.rm=TRUE) > 0) / nrow(y_binary), 3), "\n\n")
+
+# STEP 1: SELECT DETECTION STRUCTURE
+
+cat("=== TESTING DETECTION STRUCTURES ===\n\n")
+
+models_det <- list()
+models_det$null <- occuRN(~1 ~1, data = umf_rn, K = 20)
+models_det$effort <- occuRN(~effort ~1, data = umf_rn, K = 20)
+models_det$effort_moon <- occuRN(~effort + moon ~1, data = umf_rn, K = 20)
+models_det$effort_human <- occuRN(~effort + human ~1, data = umf_rn, K = 20)
+models_det$full <- occuRN(~effort + moon + human ~1, data = umf_rn, K = 20)
+
+det_aic <- aictab(models_det, 
+                  modnames = c("null", "effort", "effort+moon", 
+                               "effort+human", "full"))
+
+cat("DETECTION MODEL SELECTION:\n")
+print(det_aic, digits = 3)
+
+best_det <- as.character(det_aic$Modnames[1])
+cat("\nBest detection:", best_det, "\n\n")
+
+# Determine formula
+if(best_det == "null") {
+  det_formula <- "~1"
+} else if(best_det == "effort") {
+  det_formula <- "~effort"
+} else if(best_det == "effort+moon") {
+  det_formula <- "~effort + moon"
+} else if(best_det == "effort+human") {
+  det_formula <- "~effort + human"
+} else {
+  det_formula <- "~effort + moon + human"
+}
+
+# STEP 2: FIT ABUNDANCE MODELS (Royle-Nichols)
+
+cat("=== FITTING ROYLE-NICHOLS MODELS ===\n")
+cat("Using detection:", det_formula, "\n\n")
+
+models <- list()
+
+# Null
+models$m1_null <- occuRN(as.formula(paste(det_formula, "~1")), 
+                         data = umf_rn, K = 20)
+
+# Topography
+models$m2_elevation <- occuRN(as.formula(paste(det_formula, "~elevation")), 
+                              data = umf_rn, K = 20)
+
+models$m3_tri <- occuRN(as.formula(paste(det_formula, "~tri")), 
+                        data = umf_rn, K = 20)
+
+models$m4_topo <- occuRN(as.formula(paste(det_formula, "~elevation + tri")), 
+                         data = umf_rn, K = 20)
+
+# Rivers
+models$m5_konkiep <- occuRN(as.formula(paste(det_formula, "~dist_konkiep_river")), 
+                            data = umf_rn, K = 20)
+
+models$m6_rivers <- occuRN(as.formula(paste(det_formula, "~dist_fish_river + dist_konkiep_river")), 
+                           data = umf_rn, K = 20)
+
+# Topography + Rivers
+models$m7_topo_konkiep <- occuRN(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river")), 
+                                 data = umf_rn, K = 20)
+
+models$m8_topo_rivers <- occuRN(as.formula(paste(det_formula, "~elevation + tri + dist_fish_river + dist_konkiep_river")), 
+                                data = umf_rn, K = 20)
+
+# + Human/Infrastructure
+models$m9_topo_konkiep_staff <- occuRN(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river + dist_staff_buildings")), 
+                                       data = umf_rn, K = 20)
+
+# Full
+models$m10_full <- occuRN(as.formula(paste(det_formula, "~elevation + tri + dist_konkiep_river + dist_staff_buildings + Human_Activity")), 
+                          data = umf_rn, K = 20)
+
+cat("All models fitted\n\n")
+
+# STEP 3: MODEL SELECTION
+
+cat("=== MODEL SELECTION ===\n\n")
+
+abundance_models <- models[grep("^m[0-9]", names(models))]
+
+aic_table <- aictab(abundance_models, modnames = names(abundance_models))
+
+print(aic_table, digits = 3)
+
+write.csv(as.data.frame(aic_table), "RN_model_selection.csv", row.names = FALSE)
+
+# STEP 4: TOP MODEL SUMMARY
+
+cat("\n=== TOP MODEL (ROYLE-NICHOLS) ===\n\n")
+
+top_model_name <- as.character(aic_table$Modnames[1])
+top_model <- abundance_models[[top_model_name]]
+
+print(summary(top_model))
+
+# Extract coefficients
+coef_lambda <- coef(top_model, type = "state")
+coef_r <- coef(top_model, type = "det")
+
+cat("\n--- ABUNDANCE (lambda - log scale) ---\n")
+print(round(coef_lambda, 3))
+
+cat("\n--- DETECTION (r - logit scale) ---\n")
+print(round(coef_r, 3))
+
+# Back-transform intercepts
+lambda_int <- exp(coef_lambda[1])
+r_int <- plogis(coef_r[1])
+psi_derived <- 1 - exp(-lambda_int)
+
+cat("\n--- BACK-TRANSFORMED INTERCEPTS ---\n")
+cat("Lambda (abundance):", round(lambda_int, 3), "\n")
+cat("r (individual detection):", round(r_int, 3), "\n")
+cat("Psi (derived occupancy):", round(psi_derived, 3), "\n")
+
+# STEP 5: COMPARE WITH N-MIXTURE
+
+cat("\n=== COMPARISON WITH N-MIXTURE ===\n\n")
+
+# Load N-mixture top model
+nmix_top <- readRDS("top_pcount_model.rds")
+
+cat("N-mixture (pcount) top model:\n")
+print(summary(nmix_top))
+
+cat("\nRoyle-Nichols (occuRN) top model:\n")
+print(summary(top_model))
+
+# STEP 6: SAVE RESULTS
+
+saveRDS(models, "fitted_RN_models.rds")
+saveRDS(top_model, "top_RN_model.rds")
+
+cat("\nFiles saved:\n")
+cat("• RN_model_selection.csv\n")
+cat("• fitted_RN_models.rds\n")
+cat("• top_RN_model.rds\n")
