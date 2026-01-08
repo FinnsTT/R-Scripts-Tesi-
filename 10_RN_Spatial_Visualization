@@ -2,3 +2,340 @@
 # 
 # Purpose: Map predicted occupancy (from RN model) and check autocorrelation
 # Output: Spatial maps for λ and ψ, interpolated surfaces, Moran's I test
+
+library(unmarked)
+library(ggplot2)
+library(viridis)
+library(dplyr)
+library(sf)
+library(terra)
+library(gstat)
+library(spdep)
+library(akima)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# PART 1: LOAD DATA
+top_model <- readRDS("top_RN_model.rds")
+umf <- readRDS("unmarkedFrame_RN_3day.rds")
+siteCovs_original <- read.csv("siteCovs_original_scale.csv", stringsAsFactors = FALSE)
+
+# PART 2: PREDICT ABUNDANCE FOR ALL SITES
+
+# Rinomina prima colonna
+names(site_cov_full)[1] <- "Station"
+
+# Filtra
+stations_used <- siteCovs_original$Station
+
+site_cov_with_coords <- site_cov_full %>%
+  filter(Station %in% stations_used) %>%
+  arrange(match(Station, stations_used)) %>%
+  select(Station, X, Y)
+
+# Crea spatial_data
+pred <- predict(top_model, type = "state")
+
+spatial_data <- data.frame(
+  Station = siteCovs_original$Station,
+  X = site_cov_with_coords$X,
+  Y = site_cov_with_coords$Y,
+  Lambda = pred$Predicted,
+  Lambda_SE = pred$SE,
+  Lambda_Lower = pred$lower,
+  Lambda_Upper = pred$upper
+)
+
+# Aggiungi occupancy derivata
+spatial_data <- spatial_data %>%
+  mutate(
+    Psi = 1 - exp(-Lambda),
+    Psi_Lower = 1 - exp(-Lambda_Upper),
+    Psi_Upper = 1 - exp(-Lambda_Lower)
+  )
+
+# Verifica
+head(spatial_data)
+
+# Salva
+write.csv(spatial_data, "spatial_predictions_RN.csv", row.names = FALSE)
+
+# Derived occupancy probability
+spatial_data$Psi <- 1 - exp(-spatial_data$Lambda)
+
+# Observed detections
+obs_det <- rowSums(getY(umf), na.rm = TRUE)
+spatial_data$Observed_Detections <- obs_det
+spatial_data$Detected <- ifelse(obs_det > 0, "Yes", "No")
+
+cat("Predictions generated for", nrow(spatial_data), "sites\n")
+cat("Lambda range:", round(min(spatial_data$Lambda), 3), "-", 
+    round(max(spatial_data$Lambda), 3), "\n")
+cat("Psi range:", round(min(spatial_data$Psi), 3), "-", 
+    round(max(spatial_data$Psi), 3), "\n\n")
+
+write.csv(spatial_data, "spatial_predictions.csv", row.names = FALSE)
+
+# PART 3: SPATIAL POINT MAP
+
+p_points <- ggplot(spatial_data, aes(x = X, y = Y)) +
+  geom_point(aes(color = Lambda, size = Lambda), alpha = 0.8) +
+  scale_color_viridis_c(option = "viridis", name = "Abundance (λ)") +
+  scale_size_continuous(range = c(2, 8), guide = "none") +
+  coord_fixed() +
+  labs(title = "Predicted Brown Hyena Abundance",
+       subtitle = "Royle-Nichols model - 3-day occasions",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw() +
+  theme(legend.position = "right")
+
+ggsave("spatial_map_points.png", p_points, width = 10, height = 8)
+
+# Version with detection overlay
+p_points_det <- ggplot(spatial_data, aes(x = X, y = Y)) +
+  geom_point(aes(color = Lambda, size = Lambda, shape = Detected), alpha = 0.8) +
+  scale_color_viridis_c(option = "viridis", name = "Abundance (λ)") +
+  scale_size_continuous(range = c(2, 8), guide = "none") +
+  scale_shape_manual(values = c("No" = 1, "Yes" = 16), name = "Detected") +
+  coord_fixed() +
+  labs(title = "Predicted Abundance vs Observed Detections",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("spatial_map_points_detected.png", p_points_det, width = 10, height = 8)
+
+# PART 4: INTERPOLATED SURFACE
+
+# IDW interpolation
+interp_lambda <- interp(spatial_data$X, spatial_data$Y, spatial_data$Lambda,
+                        nx = 200, ny = 200)
+
+interp_df <- data.frame(
+  X = rep(interp_lambda$x, each = length(interp_lambda$y)),
+  Y = rep(interp_lambda$y, times = length(interp_lambda$x)),
+  Lambda = as.vector(interp_lambda$z)
+)
+
+interp_df <- interp_df[!is.na(interp_df$Lambda), ]
+
+p_surface <- ggplot() +
+  geom_tile(data = interp_df, aes(x = X, y = Y, fill = Lambda)) +
+  scale_fill_viridis_c(option = "viridis", name = "Abundance (λ)") +
+  geom_point(data = spatial_data, aes(x = X, y = Y), 
+             color = "white", size = 1, alpha = 0.5) +
+  coord_fixed() +
+  labs(title = "Interpolated Abundance Surface",
+       subtitle = "IDW interpolation with camera locations",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("spatial_surface_interpolated.png", p_surface, width = 10, height = 8)
+
+# PART 5: OCCUPANCY PROBABILITY MAP
+
+p_occupancy <- ggplot(spatial_data, aes(x = X, y = Y)) +
+  geom_point(aes(color = Psi, size = Psi), alpha = 0.8) +
+  scale_color_viridis_c(option = "mako", name = "Occupancy (ψ)") +
+  scale_size_continuous(range = c(2, 8), guide = "none") +
+  coord_fixed() +
+  labs(title = "Predicted Occupancy Probability",
+       subtitle = "Derived from λ: ψ = 1 - exp(-λ)",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("spatial_map_occupancy.png", p_occupancy, width = 10, height = 8)
+
+# PART 6: UNCERTAINTY MAP
+
+spatial_data$CI_Width <- spatial_data$Lambda_Upper - spatial_data$Lambda_Lower
+
+p_uncertainty <- ggplot(spatial_data, aes(x = X, y = Y)) +
+  geom_point(aes(color = CI_Width, size = CI_Width), alpha = 0.8) +
+  scale_color_viridis_c(option = "plasma", name = "CI Width") +
+  scale_size_continuous(range = c(2, 8), guide = "none") +
+  coord_fixed() +
+  labs(title = "Prediction Uncertainty",
+       subtitle = "Width of 95% confidence interval",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("spatial_map_uncertainty.png", p_uncertainty, width = 10, height = 8)
+
+# PART 7: SPATIAL AUTOCORRELATION - MORAN'S I
+
+cat("Testing spatial autocorrelation...\n")
+
+# Create spatial points
+coords <- as.matrix(spatial_data[, c("X", "Y")])
+
+# Define neighbors (k-nearest neighbors, k=4)
+nb <- knn2nb(knearneigh(coords, k = 4))
+
+# Create spatial weights
+listw <- nb2listw(nb, style = "W")
+
+# Moran's I test on predicted lambda
+moran_lambda <- moran.test(spatial_data$Lambda, listw)
+
+cat("\nMORAN'S I TEST - PREDICTED LAMBDA:\n")
+cat("Moran's I:", round(moran_lambda$estimate[1], 4), "\n")
+cat("Expected I:", round(moran_lambda$estimate[2], 4), "\n")
+cat("Variance:", round(moran_lambda$estimate[3], 6), "\n")
+cat("p-value:", round(moran_lambda$p.value, 4), "\n")
+
+if(moran_lambda$p.value < 0.05) {
+  cat("⚠ SIGNIFICANT spatial autocorrelation detected\n")
+  cat("  Consider spatial models or account for this in inference\n")
+} else {
+  cat("✓ No significant spatial autocorrelation\n")
+}
+
+# Moran's I test on residuals (observed - predicted)
+spatial_data$Residual <- spatial_data$Observed_Detections - 
+  (spatial_data$Lambda * obsNum(umf))
+
+moran_resid <- moran.test(spatial_data$Residual, listw)
+
+cat("\nMORAN'S I TEST - RESIDUALS:\n")
+cat("Moran's I:", round(moran_resid$estimate[1], 4), "\n")
+cat("p-value:", round(moran_resid$p.value, 4), "\n")
+
+if(moran_resid$p.value < 0.05) {
+  cat("⚠ Residuals show spatial autocorrelation\n")
+  cat("  Model may not fully capture spatial patterns\n")
+} else {
+  cat("✓ No spatial autocorrelation in residuals\n")
+}
+
+# Save Moran's I results
+moran_results <- data.frame(
+  Test = c("Lambda", "Residuals"),
+  Morans_I = c(moran_lambda$estimate[1], moran_resid$estimate[1]),
+  Expected_I = c(moran_lambda$estimate[2], moran_resid$estimate[2]),
+  p_value = c(moran_lambda$p.value, moran_resid$p.value),
+  Significant = c(moran_lambda$p.value < 0.05, moran_resid$p.value < 0.05)
+)
+
+write.csv(moran_results, "spatial_autocorrelation_morans_I.csv", row.names = FALSE)
+
+# PART 8: MORAN'S I PLOT (CORRELOGRAM)
+
+# Correlogram: Moran's I at different distance classes
+dist_matrix <- as.matrix(dist(coords))
+max_dist <- max(dist_matrix) * 0.5  # Up to half max distance
+
+# Create distance bins
+n_bins <- 10
+breaks <- seq(0, max_dist, length.out = n_bins + 1)
+dist_classes <- cut(dist_matrix[lower.tri(dist_matrix)], breaks = breaks)
+
+correlogram <- data.frame()
+
+for(i in 1:(n_bins)) {
+  dist_class <- levels(dist_classes)[i]
+  
+  # Create neighbor list for this distance class
+  nb_temp <- dnearneigh(coords, 
+                        d1 = breaks[i], 
+                        d2 = breaks[i+1])
+  
+  if(sum(card(nb_temp)) > 0) {  # If there are neighbors
+    listw_temp <- nb2listw(nb_temp, style = "W", zero.policy = TRUE)
+    
+    moran_temp <- moran.test(spatial_data$Lambda, listw_temp, 
+                             zero.policy = TRUE)
+    
+    correlogram <- rbind(correlogram, data.frame(
+      Distance = (breaks[i] + breaks[i+1]) / 2,
+      Morans_I = moran_temp$estimate[1],
+      p_value = moran_temp$p.value
+    ))
+  }
+}
+
+p_correlogram <- ggplot(correlogram, aes(x = Distance/1000, y = Morans_I)) +
+  geom_line(color = viridis(1, option = "viridis"), linewidth = 1) +
+  geom_point(aes(color = p_value < 0.05), size = 3) +
+  scale_color_manual(values = c("FALSE" = "gray", "TRUE" = viridis(1, option = "plasma")),
+                     name = "p < 0.05") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(title = "Spatial Correlogram - Moran's I",
+       subtitle = "Autocorrelation of predicted abundance at different distances",
+       x = "Distance (km)", y = "Moran's I") +
+  theme_bw()
+
+ggsave("spatial_correlogram.png", p_correlogram, width = 10, height = 6)
+
+# PART 9: VARIOGRAM (GEOSTATISTICAL APPROACH)
+
+# Convert to sf object for gstat
+spatial_sf <- st_as_sf(spatial_data, coords = c("X", "Y"), crs = 32733)  # UTM 33S
+
+# Empirical variogram
+v_lambda <- variogram(Lambda ~ 1, spatial_sf, cutoff = max_dist, width = max_dist/15)
+
+p_variogram <- ggplot(v_lambda, aes(x = dist/1000, y = gamma)) +
+  geom_point(size = 3, color = viridis(1, option = "viridis")) +
+  geom_line(color = viridis(1, option = "viridis"), linewidth = 1) +
+  labs(title = "Variogram - Predicted Abundance",
+       subtitle = "Spatial variance as function of distance",
+       x = "Distance (km)", y = "Semivariance") +
+  theme_bw()
+
+ggsave("spatial_variogram.png", p_variogram, width = 10, height = 6)
+
+# PART 10: SUMMARY STATISTICS BY REGION
+
+# Divide study area into quadrants
+spatial_data$X_median <- median(spatial_data$X)
+spatial_data$Y_median <- median(spatial_data$Y)
+
+spatial_data$Region <- case_when(
+  spatial_data$X < spatial_data$X_median & spatial_data$Y < spatial_data$Y_median ~ "SW",
+  spatial_data$X >= spatial_data$X_median & spatial_data$Y < spatial_data$Y_median ~ "SE",
+  spatial_data$X < spatial_data$X_median & spatial_data$Y >= spatial_data$Y_median ~ "NW",
+  spatial_data$X >= spatial_data$X_median & spatial_data$Y >= spatial_data$Y_median ~ "NE"
+)
+
+region_summary <- spatial_data %>%
+  group_by(Region) %>%
+  summarise(
+    N_Sites = n(),
+    Mean_Lambda = mean(Lambda),
+    SD_Lambda = sd(Lambda),
+    Mean_Psi = mean(Psi),
+    N_Detected = sum(Detected == "Yes"),
+    Detection_Rate = N_Detected / N_Sites
+  )
+
+cat("\n\nSUMMARY BY REGION:\n")
+print(region_summary)
+
+write.csv(region_summary, "spatial_summary_by_region.csv", row.names = FALSE)
+
+# Map with regions
+p_regions <- ggplot(spatial_data, aes(x = X, y = Y)) +
+  geom_point(aes(color = Lambda, shape = Region), size = 3, alpha = 0.8) +
+  scale_color_viridis_c(option = "viridis", name = "Abundance (λ)") +
+  scale_shape_manual(values = c(15, 16, 17, 18), name = "Region") +
+  coord_fixed() +
+  labs(title = "Abundance by Region",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("spatial_map_by_region.png", p_regions, width = 10, height = 8)
+
+# SUMMARY
+
+cat("\nFiles created:\n")
+cat("• spatial_predictions.csv\n")
+cat("• spatial_map_points.png\n")
+cat("• spatial_map_points_detected.png\n")
+cat("• spatial_surface_interpolated.png\n")
+cat("• spatial_map_occupancy.png\n")
+cat("• spatial_map_uncertainty.png\n")
+cat("• spatial_autocorrelation_morans_I.csv\n")
+cat("• spatial_correlogram.png\n")
+cat("• spatial_variogram.png\n")
+cat("• spatial_summary_by_region.csv\n")
+cat("• spatial_map_by_region.png\n")
