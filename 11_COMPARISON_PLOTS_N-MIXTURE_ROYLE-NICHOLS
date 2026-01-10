@@ -1,0 +1,9 @@
+# COMPARISON PLOTS: N-MIXTURE vs ROYLE-NICHOLS
+
+library(ggplot2)
+library(viridis)
+library(gridExtra)
+library(dplyr)
+library(unmarked)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
