@@ -7,3 +7,255 @@ library(dplyr)
 library(unmarked)
 
 setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+library(viridis)
+library(gridExtra)
+library(dplyr)
+library(unmarked)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# LOAD DATA
+spatial_nmix <- read.csv("nmix_predictions.csv")
+spatial_rn <- read.csv("rn_predictions.csv")
+nmix_model <- readRDS("top_nmixture_model.rds")
+rn_model <- readRDS("top_RN_model.rds")
+siteCovs_original <- read.csv("siteCovs_original_scale.csv")
+std_params <- read.csv("standardization_parameters.csv")
+
+# PLOT 1: SIDE-BY-SIDE SPATIAL MAPS
+
+p_nmix <- ggplot(spatial_nmix, aes(x = X, y = Y, color = Lambda, size = Lambda)) +
+  geom_point(alpha = 0.8) +
+  scale_color_viridis_c(option = "viridis", name = "λ", limits = c(0, 8.5)) +
+  scale_size_continuous(range = c(2, 10), guide = "none") +
+  coord_fixed() +
+  labs(title = "N-Mixture: Abundance (λ)",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw() +
+  theme(legend.position = "right")
+
+p_rn <- ggplot(spatial_rn, aes(x = X, y = Y, color = Psi, size = Psi)) +
+  geom_point(alpha = 0.8) +
+  scale_color_viridis_c(option = "plasma", name = "ψ", limits = c(0, 1)) +
+  scale_size_continuous(range = c(2, 10), guide = "none") +
+  coord_fixed() +
+  labs(title = "Royle-Nichols: Occupancy (ψ)",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw() +
+  theme(legend.position = "right")
+
+png("comparison_spatial_maps.png", width = 1600, height = 700, res = 120)
+grid.arrange(p_nmix, p_rn, ncol = 2)
+dev.off()
+
+# PLOT 2: CORRELATION SCATTERPLOT
+
+comparison_df <- data.frame(
+  Station = spatial_nmix$Station,
+  NMix_Lambda = spatial_nmix$Lambda,
+  RN_Lambda = spatial_rn$Lambda,
+  RN_Psi = spatial_rn$Psi
+)
+
+cor_lambda <- cor(comparison_df$NMix_Lambda, comparison_df$RN_Lambda)
+
+p_scatter <- ggplot(comparison_df, aes(x = RN_Lambda, y = NMix_Lambda)) +
+  geom_point(size = 3, alpha = 0.6, color = viridis(1, option = "mako")) +
+  geom_smooth(method = "lm", se = TRUE, color = viridis(1, option = "rocket"),
+              fill = viridis(1, option = "rocket", alpha = 0.3)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  annotate("text", x = 7, y = 1, 
+           label = paste0("r = ", round(cor_lambda, 3)), 
+           size = 6, hjust = 1) +
+  labs(title = "Correlation: N-Mixture vs Royle-Nichols",
+       subtitle = "Predicted abundance (λ) from both models",
+       x = "Royle-Nichols λ", y = "N-Mixture λ") +
+  theme_bw()
+
+ggsave("comparison_lambda_correlation.png", p_scatter, width = 8, height = 7)
+
+# PLOT 3: EFFECT PLOTS COMPARISON - ELEVATION
+
+# Get standardization params
+elev_mean <- std_params$Mean[std_params$Variable == "elevation"]
+elev_sd <- std_params$SD[std_params$Variable == "elevation"]
+
+# Create prediction data
+seq_vals <- seq(-2, 2, length.out = 100)
+pred_df_combined <- data.frame()
+
+for(val in seq_vals) {
+  # N-Mix
+  nd_nmix <- siteCovs(readRDS("unmarkedFrame_RN_3day.rds"))[1, , drop = FALSE]
+  nd_nmix[1, ] <- 0
+  nd_nmix[1, "elevation"] <- val
+  pred_nmix <- predict(nmix_model, type = "state", newdata = nd_nmix)
+  
+  # RN (need binary umf)
+  umf <- readRDS("unmarkedFrame_RN_3day.rds")
+  y_binary <- ifelse(getY(umf) > 0, 1, 0)
+  umf_rn <- unmarkedFrameOccu(y = y_binary, siteCovs = siteCovs(umf), obsCovs = obsCovs(umf))
+  
+  nd_rn <- siteCovs(umf_rn)[1, , drop = FALSE]
+  nd_rn[1, ] <- 0
+  nd_rn[1, "elevation"] <- val
+  pred_rn <- predict(rn_model, type = "state", newdata = nd_rn)
+  
+  # Back to original scale
+  elev_orig <- val * elev_sd + elev_mean
+  
+  pred_df_combined <- rbind(pred_df_combined, data.frame(
+    elevation = elev_orig,
+    NMix_Lambda = pred_nmix$Predicted,
+    NMix_Lower = pred_nmix$lower,
+    NMix_Upper = pred_nmix$upper,
+    RN_Lambda = pred_rn$Predicted,
+    RN_Lower = pred_rn$lower,
+    RN_Upper = pred_rn$upper
+  ))
+}
+
+p_elev_comp <- ggplot(pred_df_combined) +
+  geom_ribbon(aes(x = elevation, ymin = NMix_Lower, ymax = NMix_Upper), 
+              fill = viridis(1, option = "viridis", alpha = 0.3)) +
+  geom_line(aes(x = elevation, y = NMix_Lambda, color = "N-Mixture"), linewidth = 1.5) +
+  geom_ribbon(aes(x = elevation, ymin = RN_Lower, ymax = RN_Upper), 
+              fill = viridis(1, option = "plasma", alpha = 0.3)) +
+  geom_line(aes(x = elevation, y = RN_Lambda, color = "Royle-Nichols"), linewidth = 1.5) +
+  scale_color_manual(values = c("N-Mixture" = viridis(1, option = "viridis"),
+                                "Royle-Nichols" = viridis(1, option = "plasma")),
+                     name = "Model") +
+  labs(title = "Effect of Elevation on Abundance",
+       subtitle = "Comparison: N-Mixture vs Royle-Nichols",
+       x = "Elevation (m)", y = "Abundance (λ)") +
+  theme_bw() +
+  theme(legend.position = c(0.15, 0.85))
+
+ggsave("comparison_effect_elevation.png", p_elev_comp, width = 10, height = 7)
+
+# PLOT 4: EFFECT PLOTS COMPARISON - TRI
+
+tri_mean <- std_params$Mean[std_params$Variable == "tri"]
+tri_sd <- std_params$SD[std_params$Variable == "tri"]
+
+pred_df_tri <- data.frame()
+
+for(val in seq_vals) {
+  nd_nmix <- siteCovs(readRDS("unmarkedFrame_RN_3day.rds"))[1, , drop = FALSE]
+  nd_nmix[1, ] <- 0
+  nd_nmix[1, "tri"] <- val
+  pred_nmix <- predict(nmix_model, type = "state", newdata = nd_nmix)
+  
+  nd_rn <- siteCovs(umf_rn)[1, , drop = FALSE]
+  nd_rn[1, ] <- 0
+  nd_rn[1, "tri"] <- val
+  pred_rn <- predict(rn_model, type = "state", newdata = nd_rn)
+  
+  tri_orig <- val * tri_sd + tri_mean
+  
+  pred_df_tri <- rbind(pred_df_tri, data.frame(
+    tri = tri_orig,
+    NMix_Lambda = pred_nmix$Predicted,
+    NMix_Lower = pred_nmix$lower,
+    NMix_Upper = pred_nmix$upper,
+    RN_Lambda = pred_rn$Predicted,
+    RN_Lower = pred_rn$lower,
+    RN_Upper = pred_rn$upper
+  ))
+}
+
+p_tri_comp <- ggplot(pred_df_tri) +
+  geom_ribbon(aes(x = tri, ymin = NMix_Lower, ymax = NMix_Upper), 
+              fill = viridis(1, option = "viridis", alpha = 0.3)) +
+  geom_line(aes(x = tri, y = NMix_Lambda, color = "N-Mixture"), linewidth = 1.5) +
+  geom_ribbon(aes(x = tri, ymin = RN_Lower, ymax = RN_Upper), 
+              fill = viridis(1, option = "plasma", alpha = 0.3)) +
+  geom_line(aes(x = tri, y = RN_Lambda, color = "Royle-Nichols"), linewidth = 1.5) +
+  scale_color_manual(values = c("N-Mixture" = viridis(1, option = "viridis"),
+                                "Royle-Nichols" = viridis(1, option = "plasma")),
+                     name = "Model") +
+  labs(title = "Effect of TRI (Ruggedness) on Abundance",
+       subtitle = "RN: p<0.001 ✓✓✓ | N-Mix: p=0.117",
+       x = "TRI", y = "Abundance (λ)") +
+  theme_bw() +
+  theme(legend.position = c(0.15, 0.85))
+
+ggsave("comparison_effect_tri.png", p_tri_comp, width = 10, height = 7)
+
+# PLOT 5: EFFECT PLOTS COMPARISON - KONKIEP RIVER
+
+konkiep_mean <- std_params$Mean[std_params$Variable == "dist_konkiep_river"]
+konkiep_sd <- std_params$SD[std_params$Variable == "dist_konkiep_river"]
+
+pred_df_konkiep <- data.frame()
+
+for(val in seq_vals) {
+  nd_nmix <- siteCovs(readRDS("unmarkedFrame_RN_3day.rds"))[1, , drop = FALSE]
+  nd_nmix[1, ] <- 0
+  nd_nmix[1, "dist_konkiep_river"] <- val
+  pred_nmix <- predict(nmix_model, type = "state", newdata = nd_nmix)
+  
+  nd_rn <- siteCovs(umf_rn)[1, , drop = FALSE]
+  nd_rn[1, ] <- 0
+  nd_rn[1, "dist_konkiep_river"] <- val
+  pred_rn <- predict(rn_model, type = "state", newdata = nd_rn)
+  
+  konkiep_orig <- val * konkiep_sd + konkiep_mean
+  
+  pred_df_konkiep <- rbind(pred_df_konkiep, data.frame(
+    dist_konkiep = konkiep_orig,
+    NMix_Lambda = pred_nmix$Predicted,
+    NMix_Lower = pred_nmix$lower,
+    NMix_Upper = pred_nmix$upper,
+    RN_Lambda = pred_rn$Predicted,
+    RN_Lower = pred_rn$lower,
+    RN_Upper = pred_rn$upper
+  ))
+}
+
+p_konkiep_comp <- ggplot(pred_df_konkiep) +
+  geom_ribbon(aes(x = dist_konkiep/1000, ymin = NMix_Lower, ymax = NMix_Upper), 
+              fill = viridis(1, option = "viridis", alpha = 0.3)) +
+  geom_line(aes(x = dist_konkiep/1000, y = NMix_Lambda, color = "N-Mixture"), linewidth = 1.5) +
+  geom_ribbon(aes(x = dist_konkiep/1000, ymin = RN_Lower, ymax = RN_Upper), 
+              fill = viridis(1, option = "plasma", alpha = 0.3)) +
+  geom_line(aes(x = dist_konkiep/1000, y = RN_Lambda, color = "Royle-Nichols"), linewidth = 1.5) +
+  scale_color_manual(values = c("N-Mixture" = viridis(1, option = "viridis"),
+                                "Royle-Nichols" = viridis(1, option = "plasma")),
+                     name = "Model") +
+  labs(title = "Effect of Distance to Konkiep River on Abundance",
+       subtitle = "Negative effect: closer = higher abundance (both p<0.05)",
+       x = "Distance to Konkiep River (km)", y = "Abundance (λ)") +
+  theme_bw() +
+  theme(legend.position = c(0.85, 0.85))
+
+ggsave("comparison_effect_konkiep.png", p_konkiep_comp, width = 10, height = 7)
+
+# PLOT 6: SUMMARY BARPLOT
+
+summary_df <- data.frame(
+  Model = rep(c("N-Mixture", "Royle-Nichols"), each = 3),
+  Metric = rep(c("Mean λ", "Median λ", "Detection"), 2),
+  Value = c(mean(spatial_nmix$Lambda), median(spatial_nmix$Lambda), 0.018,
+            mean(spatial_rn$Lambda), median(spatial_rn$Lambda), 0.040)
+)
+
+p_summary <- ggplot(summary_df, aes(x = Metric, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_viridis_d(option = "viridis", begin = 0.3, end = 0.7) +
+  labs(title = "Model Comparison Summary",
+       x = "", y = "Value") +
+  theme_bw() +
+  theme(legend.position = "top")
+
+ggsave("comparison_summary_barplot.png", p_summary, width = 10, height = 6)
+
+# SUMMARY
+cat("\nFiles created:\n")
+cat("• comparison_spatial_maps.png\n")
+cat("• comparison_lambda_correlation.png\n")
+cat("• comparison_effect_elevation.png\n")
+cat("• comparison_effect_tri.png\n")
+cat("• comparison_effect_konkiep.png\n")
+cat("• comparison_summary_barplot.png\n")
