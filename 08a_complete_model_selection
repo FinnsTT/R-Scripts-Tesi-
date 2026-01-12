@@ -1,0 +1,156 @@
+# COMPLETE MODEL SELECTION - ALL COVARIATES TESTED
+
+library(unmarked)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(AICcmodavg)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+umf <- readRDS("unmarkedFrame_RN_3day.rds")
+siteCovs_original <- read.csv("siteCovs_original_scale.csv")
+
+cat("Sites:", numSites(umf), "| Occasions:", obsNum(umf), "\n\n")
+
+# DETECTION SELECTION (already done - use ~effort)
+
+det_formula <- "~effort"
+
+# FIT ALL CANDIDATE MODELS
+
+cat("Fitting all candidate models...\n\n")
+
+models <- list()
+
+# Null
+models$m1_null <- pcount(~effort ~1, data = umf, K = 20, mixture = "NB")
+
+# Single covariates - TOPOGRAPHY
+models$m2_elevation <- pcount(~effort ~elevation, data = umf, K = 20, mixture = "NB")
+models$m3_tri <- pcount(~effort ~tri, data = umf, K = 20, mixture = "NB")
+models$m4_tpi <- pcount(~effort ~tpi, data = umf, K = 20, mixture = "NB")
+
+# Single covariates - WATER
+models$m5_water_points <- pcount(~effort ~dist_water_points, data = umf, K = 20, mixture = "NB")
+models$m6_fish_river <- pcount(~effort ~dist_fish_river, data = umf, K = 20, mixture = "NB")
+models$m7_konkiep <- pcount(~effort ~dist_konkiep_river, data = umf, K = 20, mixture = "NB")
+
+# Single covariates - ANTHROPOGENIC
+models$m8_tourist_road <- pcount(~effort ~dist_tourist_road, data = umf, K = 20, mixture = "NB")
+models$m9_staff_buildings <- pcount(~effort ~dist_staff_buildings, data = umf, K = 20, mixture = "NB")
+
+# Topography combinations
+models$m10_topo <- pcount(~effort ~elevation + tri, data = umf, K = 20, mixture = "NB")
+models$m11_topo_tpi <- pcount(~effort ~elevation + tpi, data = umf, K = 20, mixture = "NB")
+
+# Water combinations
+models$m12_rivers <- pcount(~effort ~dist_fish_river + dist_konkiep_river, data = umf, K = 20, mixture = "NB")
+
+# Topo + Water
+models$m13_topo_water_points <- pcount(~effort ~elevation + tri + dist_water_points, 
+                                       data = umf, K = 20, mixture = "NB")
+models$m14_topo_fish <- pcount(~effort ~elevation + tri + dist_fish_river, 
+                               data = umf, K = 20, mixture = "NB")
+models$m15_topo_konkiep <- pcount(~effort ~elevation + tri + dist_konkiep_river, 
+                                  data = umf, K = 20, mixture = "NB")
+models$m16_topo_rivers <- pcount(~effort ~elevation + tri + dist_fish_river + dist_konkiep_river, 
+                                 data = umf, K = 20, mixture = "NB")
+
+# Topo + Water + Anthropogenic
+models$m17_topo_konkiep_road <- pcount(~effort ~elevation + tri + dist_konkiep_river + dist_tourist_road, 
+                                       data = umf, K = 20, mixture = "NB")
+models$m18_topo_konkiep_staff <- pcount(~effort ~elevation + tri + dist_konkiep_river + dist_staff_buildings, 
+                                        data = umf, K = 20, mixture = "NB")
+
+# Interaction
+models$m19_tri_water_int <- pcount(~effort ~elevation + tri * dist_water_points, 
+                                   data = umf, K = 20, mixture = "NB")
+
+cat("All models fitted successfully\n\n")
+
+# MODEL SELECTION TABLE
+
+model_list <- list(
+  models$m1_null,
+  models$m2_elevation,
+  models$m3_tri,
+  models$m4_tpi,
+  models$m5_water_points,
+  models$m6_fish_river,
+  models$m7_konkiep,
+  models$m8_tourist_road,
+  models$m9_staff_buildings,
+  models$m10_topo,
+  models$m11_topo_tpi,
+  models$m12_rivers,
+  models$m13_topo_water_points,
+  models$m14_topo_fish,
+  models$m15_topo_konkiep,
+  models$m16_topo_rivers,
+  models$m17_topo_konkiep_road,
+  models$m18_topo_konkiep_staff,
+  models$m19_tri_water_int
+)
+
+model_names <- c(
+  "M1_Null",
+  "M2_Elevation",
+  "M3_TRI",
+  "M4_TPI",
+  "M5_Water_Points",
+  "M6_Fish_River",
+  "M7_Konkiep",
+  "M8_Tourist_Road",
+  "M9_Staff_Buildings",
+  "M10_Topo",
+  "M11_Topo+TPI",
+  "M12_Rivers",
+  "M13_Topo+Water_Points",
+  "M14_Topo+Fish",
+  "M15_Topo+Konkiep",
+  "M16_Topo+Rivers",
+  "M17_Topo+Konkiep+Road",
+  "M18_Topo+Konkiep+Staff",
+  "M19_TRI×Water_Int"
+)
+
+aic_table <- aictab(model_list, modnames = model_names)
+
+cat("COMPLETE MODEL SELECTION TABLE:\n")
+print(aic_table, digits = 2)
+
+write.csv(aic_table, "COMPLETE_model_selection_NMix.csv", row.names = FALSE)
+
+# TOP MODEL SUMMARY
+
+top_model_name <- as.character(aic_table$Modnames[1])
+model_index <- which(model_names == top_model_name)
+top_model <- model_list[[model_index]]
+
+cat("\n\nTOP MODEL:", top_model_name, "\n")
+cat("════════════════════════════════════════════════════════════════\n\n")
+
+summary(top_model)
+
+saveRDS(top_model, "top_nmixture_model_COMPLETE.rds")
+saveRDS(models, "all_nmixture_models_COMPLETE.rds")
+
+# VISUALIZE AIC WEIGHTS
+
+aic_plot_df <- aic_table[1:10, ]  # Top 10
+
+p_aic <- ggplot(aic_plot_df, aes(x = reorder(Modnames, -AICcWt), y = AICcWt)) +
+  geom_bar(stat = "identity", fill = viridis(1, option = "viridis")) +
+  coord_flip() +
+  labs(title = "Top 10 Models - AICc Weights",
+       x = "Model", y = "AICc Weight") +
+  theme_bw()
+
+ggsave("model_selection_weights.png", p_aic, width = 10, height = 7)
+
+cat("\nFiles created:\n")
+cat("• COMPLETE_model_selection_NMix.csv\n")
+cat("• top_nmixture_model_COMPLETE.rds\n")
+cat("• all_nmixture_models_COMPLETE.rds\n")
+cat("• model_selection_weights.png\n")
