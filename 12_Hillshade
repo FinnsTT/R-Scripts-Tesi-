@@ -1,0 +1,120 @@
+# RASTER PREDICTIONS WITH HILLSHADE OVERLAY
+
+library(terra)
+library(ggplot2)
+library(viridis)
+library(dplyr)
+library(sf)
+library(gstat)
+library(gridExtra)
+library(stars)
+library(ggnewscale)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# LOAD DATA
+
+spatial_nmix <- read.csv("nmix_predictions.csv")
+spatial_rn <- read.csv("rn_predictions.csv")
+dem <- rast("dem.tif")
+
+# CREATE HILLSHADE
+
+slope_rast <- terrain(dem, v = "slope", unit = "radians")
+aspect_rast <- terrain(dem, v = "aspect", unit = "radians")
+hillshade <- shade(slope_rast, aspect_rast, angle = 45, direction = 315)
+
+hillshade_df <- as.data.frame(hillshade, xy = TRUE)
+names(hillshade_df)[3] <- "hillshade"
+
+# INTERPOLATE N-MIX PREDICTIONS TO RASTER
+
+# Create sf object
+spatial_nmix_sf <- st_as_sf(spatial_nmix, coords = c("X", "Y"), crs = 32733)
+
+# Create grid matching DEM
+grid <- st_as_stars(st_bbox(spatial_nmix_sf), dx = 500, dy = 500)
+
+# IDW interpolation
+idw_nmix <- gstat::idw(Lambda ~ 1, spatial_nmix_sf, grid, idp = 2)
+
+# Convert to dataframe
+nmix_rast_df <- as.data.frame(idw_nmix)
+names(nmix_rast_df) <- c("x", "y", "Lambda")
+
+# PLOT N-MIX WITH HILLSHADE
+
+p_nmix_hillshade <- ggplot() +
+  geom_raster(data = hillshade_df, aes(x = x, y = y, fill = hillshade), alpha = 0.4) +
+  scale_fill_gradient(low = "black", high = "white", guide = "none") +
+  new_scale_fill() +
+  geom_tile(data = nmix_rast_df, aes(x = x, y = y, fill = Lambda), alpha = 0.7) +
+  scale_fill_viridis_c(option = "viridis", name = "Abundance (λ)", 
+                       limits = c(0, 8.5), na.value = NA) +
+  geom_point(data = spatial_nmix, aes(x = X, y = Y), 
+             color = "white", size = 1, shape = 21, stroke = 0.5) +
+  coord_equal() +
+  labs(title = "N-Mixture: Predicted Abundance with Terrain Relief",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw() +
+  theme(legend.position = "right")
+
+ggsave("nmix_raster_hillshade.png", p_nmix_hillshade, width = 12, height = 10, dpi = 300)
+
+# INTERPOLATE RN PREDICTIONS (PSI)
+
+spatial_rn_sf <- st_as_sf(spatial_rn, coords = c("X", "Y"), crs = 32733)
+
+idw_rn <- gstat::idw(Psi ~ 1, spatial_rn_sf, grid, idp = 2)
+
+rn_rast_df <- as.data.frame(idw_rn)
+names(rn_rast_df) <- c("x", "y", "Psi")
+
+# PLOT RN WITH HILLSHADE
+
+p_rn_hillshade <- ggplot() +
+  geom_raster(data = hillshade_df, aes(x = x, y = y, fill = hillshade), alpha = 0.4) +
+  scale_fill_gradient(low = "black", high = "white", guide = "none") +
+  new_scale_fill() +
+  geom_tile(data = rn_rast_df, aes(x = x, y = y, fill = Psi), alpha = 0.7) +
+  scale_fill_viridis_c(option = "plasma", name = "Occupancy (ψ)", 
+                       limits = c(0, 1), na.value = NA) +
+  geom_point(data = spatial_rn, aes(x = X, y = Y), 
+             color = "white", size = 1, shape = 21, stroke = 0.5) +
+  coord_equal() +
+  labs(title = "Royle-Nichols: Predicted Occupancy with Terrain Relief",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw() +
+  theme(legend.position = "right")
+
+ggsave("rn_raster_hillshade.png", p_rn_hillshade, width = 12, height = 10, dpi = 300)
+
+# SIDE-BY-SIDE COMPARISON
+
+png("comparison_raster_hillshade.png", width = 2000, height = 900, res = 150)
+grid.arrange(p_nmix_hillshade, p_rn_hillshade, ncol = 2)
+dev.off()
+
+# ALTERNATIVE: CONTOUR LINES OVER HILLSHADE
+
+p_nmix_contour <- ggplot() +
+  geom_raster(data = hillshade_df, aes(x = x, y = y, fill = hillshade), alpha = 0.5) +
+  scale_fill_gradient(low = "black", high = "white", guide = "none") +
+  new_scale_fill() +
+  geom_contour_filled(data = nmix_rast_df, aes(x = x, y = y, z = Lambda), 
+                      alpha = 0.6, bins = 10) +
+  scale_fill_viridis_d(option = "viridis", name = "Abundance (λ)") +
+  geom_point(data = spatial_nmix, aes(x = X, y = Y), 
+             color = "white", size = 0.8, shape = 21) +
+  coord_equal() +
+  labs(title = "N-Mixture: Abundance Contours with Terrain",
+       x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("nmix_contour_hillshade.png", p_nmix_contour, width = 12, height = 10, dpi = 300)
+
+cat("\nFiles created:\n")
+cat("• nmix_raster_hillshade.png\n")
+cat("• rn_raster_hillshade.png\n")
+cat("• comparison_raster_hillshade.png\n")
+cat("• nmix_contour_hillshade.png\n")
