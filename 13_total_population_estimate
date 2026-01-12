@@ -1,0 +1,165 @@
+# TOTAL POPULATION ESTIMATE
+
+library(unmarked)
+library(dplyr)
+library(boot)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# LOAD DATA
+
+spatial_nmix <- read.csv("nmix_predictions.csv")
+spatial_rn <- read.csv("rn_predictions.csv")
+nmix_model <- readRDS("top_nmixture_model.rds")
+rn_model <- readRDS("top_RN_model.rds")
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("         TOTAL POPULATION ESTIMATE - BROWN HYENA               \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+# METHOD 1: SUM OF PREDICTED LAMBDA (N-MIXTURE)
+
+cat("METHOD 1: N-MIXTURE (sum of λ across all sites)\n")
+cat("───────────────────────────────────────────────────────────────\n\n")
+
+N_total_nmix <- sum(spatial_nmix$Lambda)
+N_total_nmix_lower <- sum(spatial_nmix$Lambda_Lower)
+N_total_nmix_upper <- sum(spatial_nmix$Lambda_Upper)
+
+cat("Total abundance estimate (N-Mix):\n")
+cat(sprintf("  N = %.1f individuals\n", N_total_nmix))
+cat(sprintf("  95%% CI: %.1f - %.1f\n\n", N_total_nmix_lower, N_total_nmix_upper))
+
+# Per site stats
+cat("Per-site abundance (N-Mix):\n")
+cat(sprintf("  Mean λ = %.2f\n", mean(spatial_nmix$Lambda)))
+cat(sprintf("  Median λ = %.2f\n", median(spatial_nmix$Lambda)))
+cat(sprintf("  Range: %.2f - %.2f\n\n", min(spatial_nmix$Lambda), max(spatial_nmix$Lambda)))
+
+# METHOD 2: ROYLE-NICHOLS OCCUPIED SITES
+
+cat("METHOD 2: ROYLE-NICHOLS (occupied sites ψ > 0.5)\n")
+cat("───────────────────────────────────────────────────────────────\n\n")
+
+# Sites with ψ > 0.5 considered occupied
+occupied_sites <- spatial_rn %>% filter(Psi > 0.5)
+
+N_total_rn_occupied <- sum(occupied_sites$Lambda)
+N_sites_occupied <- nrow(occupied_sites)
+
+cat("Occupied sites (ψ > 0.5):\n")
+cat(sprintf("  N sites: %d / 71 (%.1f%%)\n", N_sites_occupied, 100*N_sites_occupied/71))
+cat(sprintf("  Total N in occupied sites: %.1f individuals\n\n", N_total_rn_occupied))
+
+# All sites (including low occupancy)
+N_total_rn_all <- sum(spatial_rn$Lambda)
+
+cat("All sites (any ψ > 0):\n")
+cat(sprintf("  Total N = %.1f individuals\n", N_total_rn_all))
+cat(sprintf("  Mean λ = %.2f\n", mean(spatial_rn$Lambda)))
+cat(sprintf("  Mean ψ = %.2f (%.1f%% occupancy)\n\n", 
+            mean(spatial_rn$Psi), 100*mean(spatial_rn$Psi)))
+
+# METHOD 3: BOOTSTRAP CONFIDENCE INTERVALS
+
+cat("METHOD 3: BOOTSTRAP CI FOR N-MIXTURE\n")
+cat("───────────────────────────────────────────────────────────────\n\n")
+
+# Function to calculate total N from predictions
+calc_total_N <- function(data, indices) {
+  d <- data[indices, ]
+  sum(d$Lambda)
+}
+
+set.seed(123)
+boot_results <- boot(data = spatial_nmix, statistic = calc_total_N, R = 1000)
+
+boot_ci <- boot.ci(boot_results, type = "perc", conf = 0.95)
+
+cat("Bootstrap results (1000 iterations):\n")
+cat(sprintf("  N = %.1f individuals\n", boot_results$t0))
+cat(sprintf("  95%% CI: %.1f - %.1f\n\n", 
+            boot_ci$percent[4], boot_ci$percent[5]))
+
+# DENSITY ESTIMATE (individuals per km²)
+
+cat("DENSITY ESTIMATE\n")
+cat("───────────────────────────────────────────────────────────────\n\n")
+
+# Assume each camera covers ~1km² (adjust based on your study)
+# Or calculate from actual camera spacing
+camera_coverage_km2 <- 1  # km² per camera
+total_area_km2 <- 71 * camera_coverage_km2
+
+density_nmix <- N_total_nmix / total_area_km2
+density_rn <- N_total_rn_all / total_area_km2
+
+cat(sprintf("Assuming %.1f km² per camera:\n", camera_coverage_km2))
+cat(sprintf("  Total survey area: %.1f km²\n", total_area_km2))
+cat(sprintf("  Density (N-Mix): %.3f ind/km²\n", density_nmix))
+cat(sprintf("  Density (RN): %.3f ind/km²\n\n", density_rn))
+
+# COMPARISON TABLE
+
+comparison <- data.frame(
+  Method = c("N-Mixture (sum λ)", "N-Mix Bootstrap", "RN - All sites", "RN - Occupied only"),
+  N_Total = c(N_total_nmix, boot_results$t0, N_total_rn_all, N_total_rn_occupied),
+  Lower_CI = c(N_total_nmix_lower, boot_ci$percent[4], NA, NA),
+  Upper_CI = c(N_total_nmix_upper, boot_ci$percent[5], NA, NA),
+  Density_per_km2 = c(density_nmix, NA, density_rn, NA)
+)
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("                   SUMMARY TABLE                               \n")
+cat("═══════════════════════════════════════════════════════════════\n\n")
+
+print(comparison, digits = 2)
+
+write.csv(comparison, "population_estimate_summary.csv", row.names = FALSE)
+
+# VISUALIZATION
+
+library(ggplot2)
+library(viridis)
+
+# Plot 1: Comparison barplot
+comp_plot <- data.frame(
+  Model = c("N-Mixture", "Royle-Nichols"),
+  Total_N = c(N_total_nmix, N_total_rn_all),
+  Lower = c(N_total_nmix_lower, NA),
+  Upper = c(N_total_nmix_upper, NA)
+)
+
+p_comp <- ggplot(comp_plot, aes(x = Model, y = Total_N, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_errorbar(aes(ymin = Lower, ymax = Upper), width = 0.2, linewidth = 1) +
+  scale_fill_viridis_d(option = "viridis", begin = 0.3, end = 0.7) +
+  labs(title = "Total Population Estimate",
+       subtitle = "Sum of predicted abundance across all 71 sites",
+       y = "Total N (individuals)", x = "") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggsave("population_total_comparison.png", p_comp, width = 8, height = 6)
+
+# Plot 2: Distribution of lambda by site
+p_dist <- ggplot() +
+  geom_histogram(data = spatial_nmix, aes(x = Lambda, fill = "N-Mix"), 
+                 alpha = 0.6, bins = 20) +
+  geom_histogram(data = spatial_rn, aes(x = Lambda, fill = "RN"), 
+                 alpha = 0.6, bins = 20) +
+  scale_fill_viridis_d(option = "viridis", name = "Model") +
+  labs(title = "Distribution of Site-Level Abundance",
+       x = "Lambda (abundance per site)", y = "Frequency") +
+  theme_bw()
+
+ggsave("population_lambda_distribution.png", p_dist, width = 10, height = 6)
+
+cat("\n\nFiles created:\n")
+cat("• population_estimate_summary.csv\n")
+cat("• population_total_comparison.png\n")
+cat("• population_lambda_distribution.png\n")
+
+cat("\n═══════════════════════════════════════════════════════════════\n")
+cat("                   ANALYSIS COMPLETE                           \n")
+cat("═════════════════════════════════════════════════════════════════\n")
