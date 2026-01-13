@@ -1,0 +1,199 @@
+# SPATIAL COVARIATE MAPS FOR APPENDIX
+
+library(terra)
+library(ggplot2)
+library(viridis)
+library(gridExtra)
+library(sf)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# LOAD SPATIAL DATA
+
+dem <- rast("dem.tif")
+camera_traps <- vect("camera_traps.shp")
+fish_river <- vect("fish_river.shp")
+konkiep_river <- vect("konkiep_river.shp")
+water_points <- vect("water_points.shp")
+tourist_road <- vect("tourist_road.shp")
+
+# Reproject to DEM CRS
+fish_river_utm <- project(fish_river, crs(dem))
+konkiep_river_utm <- project(konkiep_river, crs(dem))
+water_points_utm <- project(water_points, crs(dem))
+tourist_road_utm <- project(tourist_road, crs(dem))
+
+# TERRAIN METRICS
+
+slope <- terrain(dem, v = "slope", unit = "degrees")
+tri <- terrain(dem, v = "TRI")
+tpi <- terrain(dem, v = "TPI")
+
+# DISTANCE RASTERS
+
+dist_fish <- distance(dem, fish_river_utm)
+dist_konkiep <- distance(dem, konkiep_river_utm)
+dist_water <- distance(dem, water_points_utm)
+dist_road <- distance(dem, tourist_road_utm)
+
+# CONVERT TO DATAFRAMES FOR GGPLOT
+
+dem_df <- as.data.frame(dem, xy = TRUE)
+names(dem_df)[3] <- "elevation"
+
+slope_df <- as.data.frame(slope, xy = TRUE)
+names(slope_df)[3] <- "slope"
+
+tri_df <- as.data.frame(tri, xy = TRUE)
+names(tri_df)[3] <- "tri"
+
+tpi_df <- as.data.frame(tpi, xy = TRUE)
+names(tpi_df)[3] <- "tpi"
+
+dist_fish_df <- as.data.frame(dist_fish, xy = TRUE)
+names(dist_fish_df)[3] <- "dist"
+
+dist_konkiep_df <- as.data.frame(dist_konkiep, xy = TRUE)
+names(dist_konkiep_df)[3] <- "dist"
+
+dist_water_df <- as.data.frame(dist_water, xy = TRUE)
+names(dist_water_df)[3] <- "dist"
+
+dist_road_df <- as.data.frame(dist_road, xy = TRUE)
+names(dist_road_df)[3] <- "dist"
+
+# Camera coordinates
+camera_coords <- as.data.frame(geom(camera_traps)[, c("x", "y")])
+
+# PLOT 1: ELEVATION
+
+p_elev <- ggplot() +
+  geom_raster(data = dem_df, aes(x = x, y = y, fill = elevation)) +
+  scale_fill_viridis_c(option = "mako", name = "Elevation (m)") +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_equal() +
+  labs(title = "Elevation", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_elevation.png", p_elev, width = 10, height = 8, dpi = 300)
+
+# PLOT 2: SLOPE
+
+p_slope <- ggplot() +
+  geom_raster(data = slope_df, aes(x = x, y = y, fill = slope)) +
+  scale_fill_viridis_c(option = "rocket", name = "Slope (°)") +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_equal() +
+  labs(title = "Slope", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_slope.png", p_slope, width = 10, height = 8, dpi = 300)
+
+# PLOT 3: TRI (RUGGEDNESS)
+
+p_tri <- ggplot() +
+  geom_raster(data = tri_df, aes(x = x, y = y, fill = tri)) +
+  scale_fill_viridis_c(option = "turbo", name = "TRI") +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_equal() +
+  labs(title = "Terrain Ruggedness Index (TRI)", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_tri.png", p_tri, width = 10, height = 8, dpi = 300)
+
+# PLOT 4: TPI
+
+p_tpi <- ggplot() +
+  geom_raster(data = tpi_df, aes(x = x, y = y, fill = tpi)) +
+  scale_fill_viridis_c(option = "cividis", name = "TPI") +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_equal() +
+  labs(title = "Topographic Position Index (TPI)", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_tpi.png", p_tpi, width = 10, height = 8, dpi = 300)
+
+# PLOT 5: DISTANCE TO WATER POINTS
+
+p_water <- ggplot() +
+  geom_raster(data = dist_water_df, aes(x = x, y = y, fill = dist/1000)) +
+  scale_fill_viridis_c(option = "viridis", name = "Distance (km)", direction = -1) +
+  geom_point(data = as.data.frame(geom(water_points_utm)[, c("x", "y")]), 
+             aes(x = x, y = y), color = "cyan", size = 3, shape = 17) +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_equal() +
+  labs(title = "Distance to Water Points", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_dist_water.png", p_water, width = 10, height = 8, dpi = 300)
+
+# PLOT 6: DISTANCE TO FISH RIVER
+
+p_fish <- ggplot() +
+  geom_raster(data = dist_fish_df, aes(x = x, y = y, fill = dist/1000)) +
+  scale_fill_viridis_c(option = "plasma", name = "Distance (km)", direction = -1) +
+  geom_sf(data = st_as_sf(fish_river_utm), color = "cyan", linewidth = 1.5) +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_sf() +
+  labs(title = "Distance to Fish River", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_dist_fish_river.png", p_fish, width = 10, height = 8, dpi = 300)
+
+# PLOT 7: DISTANCE TO KONKIEP RIVER
+
+p_konkiep <- ggplot() +
+  geom_raster(data = dist_konkiep_df, aes(x = x, y = y, fill = dist/1000)) +
+  scale_fill_viridis_c(option = "inferno", name = "Distance (km)", direction = -1) +
+  geom_sf(data = st_as_sf(konkiep_river_utm), color = "cyan", linewidth = 1.5) +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_sf() +
+  labs(title = "Distance to Konkiep River", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_dist_konkiep.png", p_konkiep, width = 10, height = 8, dpi = 300)
+
+# PLOT 8: DISTANCE TO TOURIST ROAD
+
+p_road <- ggplot() +
+  geom_raster(data = dist_road_df, aes(x = x, y = y, fill = dist/1000)) +
+  scale_fill_viridis_c(option = "magma", name = "Distance (km)", direction = -1) +
+  geom_sf(data = st_as_sf(tourist_road_utm), color = "yellow", linewidth = 1) +
+  geom_point(data = camera_coords, aes(x = x, y = y), 
+             color = "white", size = 1, shape = 21) +
+  coord_sf() +
+  labs(title = "Distance to Tourist Road", x = "UTM X (m)", y = "UTM Y (m)") +
+  theme_bw()
+
+ggsave("covariate_dist_road.png", p_road, width = 10, height = 8, dpi = 300)
+
+# COMBINED PANELS
+
+# Terrain panel
+png("covariates_terrain_panel.png", width = 2000, height = 1400, res = 200)
+grid.arrange(p_elev, p_slope, p_tri, p_tpi, ncol = 2)
+dev.off()
+
+# Distance panel
+png("covariates_distance_panel.png", width = 2000, height = 1400, res = 200)
+grid.arrange(p_water, p_fish, p_konkiep, p_road, ncol = 2)
+dev.off()
+
+cat("\nFiles created:\n")
+cat("• covariate_elevation.png\n")
+cat("• covariate_slope.png\n")
+cat("• covariate_tri.png\n")
+cat("• covariate_tpi.png\n")
+cat("• covariate_dist_water.png\n")
+cat("• covariate_dist_fish_river.png\n")
+cat("• covariate_dist_konkiep.png\n")
+cat("• covariate_dist_road.png\n")
+cat("• covariates_terrain_panel.png\n")
+cat("• covariates_distance_panel.png\n")
