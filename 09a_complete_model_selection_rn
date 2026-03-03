@@ -1,0 +1,176 @@
+# ROYLE-NICHOLS: COMPLETE MODEL SELECTION (19 models)
+# Mirrors 08a_complete_model_selection.R for N-mixture
+# Purpose: Test all same candidate models as N-mixture for comparability
+
+library(unmarked)
+library(AICcmodavg)
+library(ggplot2)
+library(viridis)
+library(dplyr)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# ---- LOAD DATA ----
+
+umf_pcount <- readRDS("unmarkedFrame_RN_3day.rds")
+
+# Convert counts to binary for Royle-Nichols
+y_counts <- getY(umf_pcount)
+y_binary <- ifelse(y_counts > 0, 1, 0)
+
+umf_rn <- unmarkedFrameOccu(
+  y        = y_binary,
+  siteCovs = siteCovs(umf_pcount),
+  obsCovs  = obsCovs(umf_pcount)
+)
+
+cat("Royle-Nichols frame:", numSites(umf_rn), "sites x", obsNum(umf_rn), "occasions\n")
+cat("Naive occupancy:", round(mean(rowSums(y_binary, na.rm=TRUE) > 0), 3), "\n\n")
+
+# Detection submodel fixed to ~effort (best from script 09)
+det <- "~effort"
+
+# ---- FIT 19 CANDIDATE MODELS (same set as N-mixture 08a) ----
+
+cat("Fitting 19 candidate models...\n\n")
+
+models <- list()
+
+# Null
+models$m1_null <- occuRN(~effort ~1, data = umf_rn, K = 20)
+
+# Single - topography
+models$m2_elevation      <- occuRN(~effort ~elevation,  data = umf_rn, K = 20)
+models$m3_tri            <- occuRN(~effort ~tri,        data = umf_rn, K = 20)
+models$m4_tpi            <- occuRN(~effort ~tpi,        data = umf_rn, K = 20)
+
+# Single - water
+models$m5_water_points   <- occuRN(~effort ~dist_water_points,   data = umf_rn, K = 20)
+models$m6_fish_river     <- occuRN(~effort ~dist_fish_river,     data = umf_rn, K = 20)
+models$m7_konkiep        <- occuRN(~effort ~dist_konkiep_river,  data = umf_rn, K = 20)
+
+# Single - anthropogenic
+models$m8_tourist_road   <- occuRN(~effort ~dist_tourist_road,   data = umf_rn, K = 20)
+models$m9_staff_buildings<- occuRN(~effort ~dist_staff_buildings,data = umf_rn, K = 20)
+
+# Topography combos
+models$m10_topo          <- occuRN(~effort ~elevation + tri,       data = umf_rn, K = 20)
+models$m11_topo_tpi      <- occuRN(~effort ~elevation + tpi,       data = umf_rn, K = 20)
+
+# Water combos
+models$m12_rivers        <- occuRN(~effort ~dist_fish_river + dist_konkiep_river,
+                                   data = umf_rn, K = 20)
+
+# Topo + water
+models$m13_topo_water_points <- occuRN(~effort ~elevation + tri + dist_water_points,
+                                       data = umf_rn, K = 20)
+models$m14_topo_fish     <- occuRN(~effort ~elevation + tri + dist_fish_river,
+                                   data = umf_rn, K = 20)
+models$m15_topo_konkiep  <- occuRN(~effort ~elevation + tri + dist_konkiep_river,
+                                   data = umf_rn, K = 20)
+models$m16_topo_rivers   <- occuRN(~effort ~elevation + tri + dist_fish_river + dist_konkiep_river,
+                                   data = umf_rn, K = 20)
+
+# Topo + water + anthropogenic
+models$m17_topo_konkiep_road  <- occuRN(~effort ~elevation + tri + dist_konkiep_river + dist_tourist_road,
+                                        data = umf_rn, K = 20)
+models$m18_topo_konkiep_staff <- occuRN(~effort ~elevation + tri + dist_konkiep_river + dist_staff_buildings,
+                                        data = umf_rn, K = 20)
+
+# Interaction
+models$m19_tri_water_int <- occuRN(~effort ~elevation + tri * dist_water_points,
+                                   data = umf_rn, K = 20)
+
+cat("All 19 models fitted successfully\n\n")
+
+# ---- MODEL SELECTION TABLE ----
+
+model_names <- c(
+  "M1_Null",
+  "M2_Elevation",
+  "M3_TRI",
+  "M4_TPI",
+  "M5_Water_Points",
+  "M6_Fish_River",
+  "M7_Konkiep",
+  "M8_Tourist_Road",
+  "M9_Staff_Buildings",
+  "M10_Topo",
+  "M11_Topo+TPI",
+  "M12_Rivers",
+  "M13_Topo+Water_Points",
+  "M14_Topo+Fish",
+  "M15_Topo+Konkiep",
+  "M16_Topo+Rivers",
+  "M17_Topo+Konkiep+Road",
+  "M18_Topo+Konkiep+Staff",
+  "M19_TRI×Water_Int"
+)
+
+model_list <- unname(models)
+
+aic_table <- aictab(model_list, modnames = model_names)
+
+cat("COMPLETE RN MODEL SELECTION TABLE (19 models):\n")
+print(aic_table, digits = 2)
+
+write.csv(as.data.frame(aic_table), "COMPLETE_model_selection_RN.csv", row.names = FALSE)
+
+# ---- TOP MODEL SUMMARY ----
+
+top_name  <- as.character(aic_table$Modnames[1])
+top_index <- which(model_names == top_name)
+top_model <- model_list[[top_index]]
+
+cat("\n\nTOP RN MODEL:", top_name, "\n")
+cat("════════════════════════════════════════════════════════════════\n\n")
+summary(top_model)
+
+# Back-transform intercepts
+coef_lam <- coef(top_model, type = "state")
+coef_det <- coef(top_model, type = "det")
+
+lambda_int <- exp(coef_lam["(Intercept)"])
+r_int      <- plogis(coef_det["(Intercept)"])
+psi_derived <- 1 - exp(-lambda_int)
+
+cat(sprintf("\nBack-transformed intercepts:\n"))
+cat(sprintf("  Lambda: %.3f\n", lambda_int))
+cat(sprintf("  Individual detection (r): %.4f (%.1f%%)\n", r_int, r_int*100))
+cat(sprintf("  Derived occupancy (psi): %.3f (%.1f%%)\n", psi_derived, psi_derived*100))
+
+# ---- SIDE-BY-SIDE COMPARISON WITH N-MIXTURE TOP 10 ----
+
+nmix_aic <- read.csv("COMPLETE_model_selection_NMix.csv", stringsAsFactors = FALSE)
+
+cat("\n\n=== TOP 10 COMPARISON: N-MIXTURE vs ROYLE-NICHOLS ===\n")
+
+rn_top10   <- as.data.frame(aic_table)[1:10, c("Modnames","K","AICc","Delta_AICc","AICcWt")]
+nmix_top10 <- nmix_aic[1:10, c("Modnames","K","AICc","Delta_AICc","AICcWt")]
+
+cat("\nN-MIXTURE TOP 10:\n"); print(nmix_top10, row.names = FALSE, digits = 3)
+cat("\nROYLE-NICHOLS TOP 10:\n"); print(rn_top10, row.names = FALSE, digits = 3)
+
+# ---- AIC WEIGHT PLOT ----
+
+rn_plot_df <- as.data.frame(aic_table)[1:10, ]
+
+p_aic <- ggplot(rn_plot_df, aes(x = reorder(Modnames, -AICcWt), y = AICcWt)) +
+  geom_bar(stat = "identity", fill = viridis(1, option = "plasma")) +
+  coord_flip() +
+  labs(title = "Top 10 RN Models - AICc Weights",
+       x = "Model", y = "AICc Weight") +
+  theme_bw()
+
+ggsave("RN_complete_model_selection_weights.png", p_aic, width = 10, height = 7)
+
+# ---- SAVE ----
+
+saveRDS(top_model, "top_RN_model_COMPLETE.rds")
+saveRDS(models,    "all_RN_models_COMPLETE.rds")
+
+cat("\nFiles created:\n")
+cat("• COMPLETE_model_selection_RN.csv\n")
+cat("• RN_complete_model_selection_weights.png\n")
+cat("• top_RN_model_COMPLETE.rds\n")
+cat("• all_RN_models_COMPLETE.rds\n")
