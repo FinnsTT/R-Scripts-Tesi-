@@ -49,7 +49,7 @@ cat("\nM15 abundance coefficients:\n"); print(round(coef15, 4))
 # Using unconditional SE (Burnham & Anderson 2002):
 # SE_avg = sum(wi * sqrt(var_i + (theta_i - theta_avg)^2))
 
-params_shared <- c("(Intercept)", "elevation", "tri", "dist_konkiep_river")
+params_shared <- c("lam(Int)", "lam(elevation)", "lam(tri)", "lam(dist_konkiep_river)")
 
 avg_results <- data.frame(
   Parameter      = character(),
@@ -84,14 +84,14 @@ for (p in params_shared) {
 
 # dist_road: only in M17, zero contribution from M15
 # Shrinkage estimator: theta_avg = w17 * theta17 + w15 * 0
-b_road     <- coef17["dist_tourist_road"]
-s_road     <- se17["dist_tourist_road"]
+b_road     <- coef17["lam(dist_tourist_road)"]
+s_road     <- se17["lam(dist_tourist_road)"]
 b_road_avg <- w17 * b_road  # w15 * 0 = 0
 se_road_avg <- w17 * sqrt(s_road^2 + (b_road - b_road_avg)^2) +
   w15 * sqrt(0   + (0      - b_road_avg)^2)
 
 avg_results <- rbind(avg_results, data.frame(
-  Parameter    = "dist_tourist_road",
+  Parameter    = "lam(dist_tourist_road)",
   Avg_Estimate = unname(b_road_avg),
   Uncond_SE    = unname(se_road_avg),
   CI_Lower_95  = unname(b_road_avg - 1.96 * se_road_avg),
@@ -142,7 +142,7 @@ det_print[, -1] <- round(det_print[, -1], 4)
 print(det_print, row.names = FALSE)
 
 # Back-transform intercepts
-lambda_avg <- exp(avg_results$Avg_Estimate[avg_results$Parameter == "(Intercept)"])
+lambda_avg <- exp(avg_results$Avg_Estimate[avg_results$Parameter == "lam(Int)"])
 p_avg      <- plogis(det_results$Avg_Estimate[det_results$Parameter == "(Intercept)"])
 
 cat(sprintf("\nBack-transformed intercepts:\n"))
