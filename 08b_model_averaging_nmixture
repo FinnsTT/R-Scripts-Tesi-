@@ -1,0 +1,159 @@
+# MODEL AVERAGING: N-MIXTURE M17 + M15
+# Purpose: Compute model-averaged parameter estimates weighted by AICc weights
+# Models: M17 (Elev + TRI + Konkiep + Road) and M15 (Elev + TRI + Konkiep)
+
+library(unmarked)
+library(AICcmodavg)
+library(dplyr)
+
+setwd("C:/Users/Dell/Desktop/codici tesi/file GIS")
+
+# Load data and models
+umf <- readRDS("unmarkedFrame_RN_3day.rds")
+all_models <- readRDS("all_nmixture_models_COMPLETE.rds")
+
+cat("=== MODEL AVERAGING: N-MIXTURE ===\n\n")
+
+# Extract M17 and M15
+m17 <- all_models$m17_topo_konkiep_road
+m15 <- all_models$m15_topo_konkiep
+
+# Rebuild AIC table for these two
+model_subset <- list(m17, m15)
+model_names  <- c("M17_Elev+TRI+Konkiep+Road", "M15_Elev+TRI+Konkiep")
+
+aic_sub <- aictab(model_subset, modnames = model_names)
+cat("AICc table for candidate models:\n")
+print(aic_sub, digits = 3)
+
+# Extract AICc weights
+w17 <- aic_sub$AICcWt[aic_sub$Modnames == "M17_Elev+TRI+Konkiep+Road"]
+w15 <- aic_sub$AICcWt[aic_sub$Modnames == "M15_Elev+TRI+Konkiep"]
+
+cat(sprintf("\nWeights: M17 = %.3f | M15 = %.3f\n\n", w17, w15))
+
+# ---- ABUNDANCE PARAMETERS ----
+
+# Shared parameters: Intercept, Elevation, TRI, dist_konkiep
+# M17-only: dist_tourist_road
+
+coef17 <- coef(m17, type = "state")
+coef15 <- coef(m15, type = "state")
+se17   <- SE(m17, type = "state")
+se15   <- SE(m15, type = "state")
+
+cat("M17 abundance coefficients:\n"); print(round(coef17, 4))
+cat("\nM15 abundance coefficients:\n"); print(round(coef15, 4))
+
+# Model-averaged estimates for shared params
+# Using unconditional SE (Burnham & Anderson 2002):
+# SE_avg = sum(wi * sqrt(var_i + (theta_i - theta_avg)^2))
+
+params_shared <- c("(Intercept)", "elevation", "tri", "dist_konkiep_river")
+
+avg_results <- data.frame(
+  Parameter      = character(),
+  Avg_Estimate   = numeric(),
+  Uncond_SE      = numeric(),
+  CI_Lower_95    = numeric(),
+  CI_Upper_95    = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (p in params_shared) {
+  b17 <- coef17[p]
+  b15 <- coef15[p]
+  s17 <- se17[p]
+  s15 <- se15[p]
+  
+  # Weighted average
+  b_avg <- w17 * b17 + w15 * b15
+  
+  # Unconditional SE
+  se_avg <- w17 * sqrt(s17^2 + (b17 - b_avg)^2) +
+    w15 * sqrt(s15^2 + (b15 - b_avg)^2)
+  
+  avg_results <- rbind(avg_results, data.frame(
+    Parameter    = p,
+    Avg_Estimate = unname(b_avg),
+    Uncond_SE    = unname(se_avg),
+    CI_Lower_95  = unname(b_avg - 1.96 * se_avg),
+    CI_Upper_95  = unname(b_avg + 1.96 * se_avg)
+  ))
+}
+
+# dist_road: only in M17, zero contribution from M15
+# Shrinkage estimator: theta_avg = w17 * theta17 + w15 * 0
+b_road     <- coef17["dist_tourist_road"]
+s_road     <- se17["dist_tourist_road"]
+b_road_avg <- w17 * b_road  # w15 * 0 = 0
+se_road_avg <- w17 * sqrt(s_road^2 + (b_road - b_road_avg)^2) +
+  w15 * sqrt(0   + (0      - b_road_avg)^2)
+
+avg_results <- rbind(avg_results, data.frame(
+  Parameter    = "dist_tourist_road",
+  Avg_Estimate = unname(b_road_avg),
+  Uncond_SE    = unname(se_road_avg),
+  CI_Lower_95  = unname(b_road_avg - 1.96 * se_road_avg),
+  CI_Upper_95  = unname(b_road_avg + 1.96 * se_road_avg)
+))
+
+# ---- DETECTION PARAMETERS (shared ~effort in both) ----
+
+coef17_det <- coef(m17, type = "det")
+coef15_det <- coef(m15, type = "det")
+se17_det   <- SE(m17, type = "det")
+se15_det   <- SE(m15, type = "det")
+
+det_results <- data.frame(
+  Parameter      = character(),
+  Avg_Estimate   = numeric(),
+  Uncond_SE      = numeric(),
+  CI_Lower_95    = numeric(),
+  CI_Upper_95    = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (p in names(coef17_det)) {
+  b17 <- coef17_det[p]; b15 <- coef15_det[p]
+  s17 <- se17_det[p];   s15 <- se15_det[p]
+  b_avg  <- w17 * b17 + w15 * b15
+  se_avg <- w17 * sqrt(s17^2 + (b17 - b_avg)^2) +
+    w15 * sqrt(s15^2 + (b15 - b_avg)^2)
+  det_results <- rbind(det_results, data.frame(
+    Parameter    = p,
+    Avg_Estimate = unname(b_avg),
+    Uncond_SE    = unname(se_avg),
+    CI_Lower_95  = unname(b_avg - 1.96 * se_avg),
+    CI_Upper_95  = unname(b_avg + 1.96 * se_avg)
+  ))
+}
+
+# ---- PRINT RESULTS ----
+
+cat("\n=== MODEL-AVERAGED ABUNDANCE PARAMETERS (log scale) ===\n")
+avg_print <- avg_results
+avg_print[, -1] <- round(avg_print[, -1], 4)
+print(avg_print, row.names = FALSE)
+
+cat("\n=== MODEL-AVERAGED DETECTION PARAMETERS (logit scale) ===\n")
+det_print <- det_results
+det_print[, -1] <- round(det_print[, -1], 4)
+print(det_print, row.names = FALSE)
+
+# Back-transform intercepts
+lambda_avg <- exp(avg_results$Avg_Estimate[avg_results$Parameter == "(Intercept)"])
+p_avg      <- plogis(det_results$Avg_Estimate[det_results$Parameter == "(Intercept)"])
+
+cat(sprintf("\nBack-transformed intercepts:\n"))
+cat(sprintf("  Lambda (abundance intercept): %.3f\n", lambda_avg))
+cat(sprintf("  Detection probability (p):    %.4f (%.1f%%)\n", p_avg, p_avg*100))
+
+# ---- EXPORT ----
+
+write.csv(avg_results,  "model_averaged_abundance_params.csv",  row.names = FALSE)
+write.csv(det_results,  "model_averaged_detection_params.csv",  row.names = FALSE)
+
+cat("\nFiles saved:\n")
+cat("• model_averaged_abundance_params.csv\n")
+cat("• model_averaged_detection_params.csv\n")
